@@ -56,7 +56,7 @@
 
 ### 开发目标
 
-整理项目需要的外部服务与环境变量，确保 Telegram、Gemini、MongoDB Atlas、Vercel 部署和 webhook 配置都有明确入口。
+整理项目需要的外部服务与环境变量，确保 Telegram、Gemini、MongoDB Atlas、本地 ngrok webhook 测试、Vercel 部署和 production webhook 配置都有明确入口。当前阶段先准备本地反代测试条件，后续完成 webhook route 后优先通过 ngrok 做真实 Telegram 消息验证，再部署到 Vercel。
 
 ### 主要任务
 
@@ -75,6 +75,11 @@ RECENT_CONTEXT_MESSAGE_LIMIT="10"
 ```
 
 - 在 `docs/architecture.md` 或单独文档中说明环境变量用途。
+- 准备 ngrok 本地反代流程：
+  - 确认本机已安装 ngrok CLI；当前开发机可使用 `ngrok version 3.37.6`。
+  - 登录 ngrok dashboard 获取 authtoken。
+  - 在本机运行 `ngrok config add-authtoken <YOUR_NGROK_AUTHTOKEN>` 完成 ngrok agent 配置。
+  - 本地 webhook 测试时先运行 `npm run dev`，再运行 `ngrok http 3000`，并将 Forwarding HTTPS URL 临时填入 `.env.local` 的 `NEXT_PUBLIC_APP_URL`。
 - 建立配置读取模块，集中读取并校验环境变量。
 - 使用 Zod 或等价方式验证必要环境变量。
 
@@ -83,67 +88,18 @@ RECENT_CONTEXT_MESSAGE_LIMIT="10"
 - `src/config`
 - 环境变量
 - 外部服务配置
+- ngrok 本地反代测试准备
 
 ### 用户手动操作
 
-#### Telegram Bot
-
-1. 在 Telegram 中打开 `@BotFather`。
-2. 使用 `/newbot` 创建 bot。
-3. 获取 Bot Token。
-4. 将 token 填入本地 `.env.local`：
-
-```bash
-TELEGRAM_BOT_TOKEN="BotFather 提供的 token"
-```
-
-#### Gemini API
-
-1. 登录 Google AI Studio 或 GCP。
-2. 创建或选择可使用 Gemini API 的项目。
-3. 生成 Gemini API key。
-4. 将 key 填入 `.env.local`：
-
-```bash
-GEMINI_API_KEY="Gemini API key"
-```
-
-#### MongoDB Atlas
-
-1. 创建 MongoDB Atlas 项目与 cluster。
-2. 创建数据库用户。
-3. 设置 Network Access，开发阶段可加入当前 IP。
-4. 获取 connection string。
-5. 将连接字符串填入 `.env.local`：
-
-```bash
-MONGODB_URI="mongodb+srv://..."
-```
-
-#### Vercel 与 webhook URL
-
-1. 在 Vercel 创建项目并连接 Git 仓库。
-2. 配置 production 环境变量。
-3. 部署后获取公开 URL。
-4. 将 URL 填入环境变量：
-
-```bash
-NEXT_PUBLIC_APP_URL="https://your-project.vercel.app"
-```
-
-#### Webhook Secret
-
-1. 自行生成一段随机字符串。
-2. 填入 `.env.local` 与 Vercel 环境变量：
-
-```bash
-TELEGRAM_WEBHOOK_SECRET="random-long-secret"
-```
+详见 `docs/setup.md`。该文档集中说明 Telegram BotFather、Gemini API、MongoDB Atlas、ngrok 本地反代、Vercel 环境变量与 Telegram webhook 注册流程。
 
 ### 验收条件
 
 - `.env.example` 包含所有基础功能所需字段。
 - 本地 `.env.local` 可按 `.env.example` 创建。
+- ngrok CLI 可用，且本机已通过 `ngrok config add-authtoken <YOUR_NGROK_AUTHTOKEN>` 配置账号 token。
+- 文档明确说明 `NEXT_PUBLIC_APP_URL` 在本地测试阶段使用 ngrok HTTPS URL，部署后使用 Vercel production URL。
 - 配置模块能在缺少必填变量时给出明确错误。
 - 文档清楚说明每个 token、project URL 或 connection string 从哪里获取、填到哪里。
 
@@ -217,25 +173,47 @@ TELEGRAM_WEBHOOK_SECRET="random-long-secret"
 
 ### 用户手动操作
 
-部署到 Vercel 后，需要向 Telegram 注册 webhook。示例：
+本阶段优先使用 ngrok 将本地 Next.js webhook 暴露给 Telegram，完成真实 Telegram update 的本地验证。标准流程：
+
+1. 启动本地 Next.js 开发服务器：
 
 ```bash
-curl "https://api.telegram.org/bot<TELEGRAM_BOT_TOKEN>/setWebhook?url=<NEXT_PUBLIC_APP_URL>/api/telegram/webhook&secret_token=<TELEGRAM_WEBHOOK_SECRET>"
+npm run dev
+```
+
+2. 另开终端启动 ngrok，本地端口默认使用 Next.js 的 `3000`；如 `npm run dev` 使用了其他端口，则同步替换：
+
+```bash
+ngrok http 3000
+```
+
+3. 复制 ngrok 输出中的 Forwarding HTTPS URL，例如 `https://xxxx.ngrok-free.app`。
+4. 将 `.env.local` 中的 `NEXT_PUBLIC_APP_URL` 临时改为该 ngrok HTTPS URL。
+5. 使用 ngrok HTTPS URL 向 Telegram 注册 webhook：
+
+```bash
+curl "https://api.telegram.org/bot<TELEGRAM_BOT_TOKEN>/setWebhook?url=<NGROK_HTTPS_URL>/api/telegram/webhook&secret_token=<TELEGRAM_WEBHOOK_SECRET>"
 ```
 
 需要替换：
 
 - `<TELEGRAM_BOT_TOKEN>` 为 BotFather token。
-- `<NEXT_PUBLIC_APP_URL>` 为 Vercel 部署地址。
-- `<TELEGRAM_WEBHOOK_SECRET>` 为 `.env.local` 与 Vercel 中一致的 secret。
+- `<NGROK_HTTPS_URL>` 为 ngrok Forwarding HTTPS URL。
+- `<TELEGRAM_WEBHOOK_SECRET>` 为 `.env.local` 中配置的 webhook secret。
+
+检查 webhook 状态：
+
+```bash
+curl "https://api.telegram.org/bot<TELEGRAM_BOT_TOKEN>/getWebhookInfo"
+```
 
 ### 验收条件
 
-- Telegram webhook endpoint 可以接收真实 Telegram update。
+- Telegram webhook endpoint 可以通过 ngrok 接收真实 Telegram update。
 - webhook secret 不正确时拒绝请求。
 - 文字消息与 callback query 都可以被识别。
 - Telegram Bot API failed 时记录错误 log。
-- Bot 能通过 Telegram API 回复用户。
+- Bot 能在本地开发服务器中通过 Telegram API 回复用户。
 
 ## Phase 5: MongoDB + Mongoose 数据持久化
 
@@ -491,8 +469,8 @@ ADMIN_POLLING_INTERVAL_MS="5000"
   - 基础测试命令
 - 确认 Vercel 环境变量配置。
 - 部署到 Vercel。
-- 注册 Telegram webhook。
-- 使用真实 Telegram Bot 完成端到端测试。
+- 将 Telegram webhook 从本地 ngrok URL 切换到 Vercel production URL。
+- 使用真实 Telegram Bot 完成本地 ngrok 与 Vercel production 两轮端到端测试。
 
 ### 涉及模块
 
@@ -504,31 +482,7 @@ ADMIN_POLLING_INTERVAL_MS="5000"
 
 ### 用户手动操作
 
-#### Vercel 环境变量
-
-在 Vercel 项目设置中添加：
-
-```bash
-TELEGRAM_BOT_TOKEN="YOUR_TELEGRAM_BOT_TOKEN"
-TELEGRAM_WEBHOOK_SECRET="YOUR_TELEGRAM_WEBHOOK_SECRET"
-GEMINI_API_KEY="YOUR_GEMINI_API_KEY"
-MONGODB_URI="YOUR_MONGODB_ATLAS_CONNECTION_STRING"
-NEXT_PUBLIC_APP_URL="https://your-project.vercel.app"
-ADMIN_POLLING_INTERVAL_MS="5000"
-USER_RATE_LIMIT_WINDOW_MS="60000"
-USER_RATE_LIMIT_MAX_MESSAGES="20"
-RECENT_CONTEXT_MESSAGE_LIMIT="10"
-```
-
-#### Telegram webhook 注册
-
-部署完成后运行：
-
-```bash
-curl "https://api.telegram.org/bot<TELEGRAM_BOT_TOKEN>/setWebhook?url=<NEXT_PUBLIC_APP_URL>/api/telegram/webhook&secret_token=<TELEGRAM_WEBHOOK_SECRET>"
-```
-
-#### 端到端测试
+Vercel 环境变量与 Telegram webhook 注册步骤详见 `docs/setup.md`。部署完成后需要重新调用 `setWebhook`，将 Telegram webhook 从 Phase 4 使用的 ngrok URL 切换到 Vercel production URL。随后按以下流程做 production 端到端测试：
 
 1. 在 Telegram 中打开 bot。
 2. 发送 `/start`。
@@ -542,9 +496,10 @@ curl "https://api.telegram.org/bot<TELEGRAM_BOT_TOKEN>/setWebhook?url=<NEXT_PUBL
 - `npm run lint` 通过。
 - `npm test` 或项目定义的测试命令通过。
 - README 包含完整本地运行与部署说明。
+- 本地 ngrok 端到端测试已经完成。
 - Vercel 部署成功。
-- Telegram webhook 注册成功。
-- 真实 Telegram 对话可以触发 Gemini 回复。
+- Telegram webhook 已成功切换到 Vercel production URL。
+- 真实 Telegram 对话可以在 Vercel production 环境触发 Gemini 回复。
 - MongoDB Atlas 中可以看到完整对话记录。
 - 管理后台可以查看、筛选、搜索、统计并实时更新消息。
 
