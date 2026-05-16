@@ -56,7 +56,7 @@
 
 ### 开发目标
 
-整理项目需要的外部服务与环境变量，确保 Telegram、Qwen、MongoDB Atlas、本地 ngrok webhook 测试、Vercel 部署和 production webhook 配置都有明确入口。当前阶段先准备本地反代测试条件，后续完成 webhook route 后优先通过 ngrok 做真实 Telegram 消息验证，再部署到 Vercel。
+整理项目需要的外部服务与环境变量，确保 Telegram、Qwen、MongoDB Atlas、本地 ngrok webhook 测试、Vercel 部署和 production webhook 配置都有明确入口。当前阶段只准备配置与账号条件，不要求完成 Vercel 部署；后续完成 webhook route 后优先通过 ngrok 做真实 Telegram 消息验证，最后再切换到 Vercel production。
 
 ### 主要任务
 
@@ -139,6 +139,7 @@ RECENT_CONTEXT_MESSAGE_LIMIT="10"
 ### 用户手动操作
 
 本阶段需要已经完成 Phase 2 的 Telegram Bot Token 配置。
+本阶段只实现 bot 路由、命令、按钮和纯逻辑测试，不需要 webhook 真正上线。
 
 ### 验收条件
 
@@ -209,9 +210,12 @@ curl "https://api.telegram.org/bot<TELEGRAM_BOT_TOKEN>/setWebhook?url=<NGROK_HTT
 curl "https://api.telegram.org/bot<TELEGRAM_BOT_TOKEN>/getWebhookInfo"
 ```
 
+如果 `getWebhookInfo` 中的 `url` 显示为当前 ngrok HTTPS URL，即代表 Telegram 已经将 webhook 指向本地反代环境。免费 ngrok tunnel 重启后 URL 可能变化，需要同步更新 `.env.local` 中的 `NEXT_PUBLIC_APP_URL`、重启本地 dev server，并重新调用 `setWebhook`。
+
 ### 验收条件
 
 - Telegram webhook endpoint 可以通过 ngrok 接收真实 Telegram update。
+- `getWebhookInfo` 显示 webhook URL 是当前 ngrok HTTPS URL。
 - webhook secret 不正确时拒绝请求。
 - 文字消息与 callback query 都可以被识别。
 - Telegram Bot API failed 时记录错误 log。
@@ -247,11 +251,13 @@ curl "https://api.telegram.org/bot<TELEGRAM_BOT_TOKEN>/getWebhookInfo"
 
 ### 用户手动操作
 
-需要确保 `.env.local` 与 Vercel 环境变量中已经设置：
+本地开发阶段需要确保 `.env.local` 已经设置：
 
 ```bash
 MONGODB_URI="mongodb+srv://..."
 ```
+
+开发阶段优先继续使用本地 Next.js + ngrok webhook 验证数据库写入；Vercel 环境变量在最终部署前集中配置。
 
 ### 验收条件
 
@@ -292,7 +298,7 @@ MONGODB_URI="mongodb+srv://..."
 
 ### 用户手动操作
 
-需要确保 `.env.local` 与 Vercel 环境变量中已经设置：
+本地开发阶段需要确保 `.env.local` 已经设置：
 
 ```bash
 QWEN_API_KEY="Qwen API key"
@@ -300,6 +306,8 @@ QWEN_MODEL="qwen-plus"
 QWEN_API_BASE_URL="https://dashscope.aliyuncs.com/compatible-mode/v1"
 RECENT_CONTEXT_MESSAGE_LIMIT="10"
 ```
+
+开发阶段优先继续使用本地 Next.js + ngrok webhook 验证 Qwen 回复、上下文传递和 Telegram 真实消息链路；Vercel 环境变量在最终部署前集中配置。
 
 ### 验收条件
 
@@ -356,6 +364,8 @@ USER_RATE_LIMIT_WINDOW_MS="60000"
 USER_RATE_LIMIT_MAX_MESSAGES="20"
 ```
 
+开发阶段优先继续使用本地 Next.js + ngrok webhook 验证 quota fallback、429 fallback、限流提示和错误记录；不要求在本阶段部署 Vercel。
+
 ### 验收条件
 
 - Qwen timeout 会回复友好的 fallback。
@@ -399,6 +409,8 @@ USER_RATE_LIMIT_MAX_MESSAGES="20"
 
 本阶段暂无额外外部平台操作。若后续加入后台鉴权，应单独补充配置说明；基础版本不实现复杂多管理员权限系统。
 
+本阶段仍以本地后台页面配合 ngrok Telegram webhook 做端到端验证，确认真实 Telegram 消息入库后能在后台查询。
+
 ### 验收条件
 
 - 后台可以看到所有对话记录。
@@ -437,6 +449,8 @@ USER_RATE_LIMIT_MAX_MESSAGES="20"
 ADMIN_POLLING_INTERVAL_MS="5000"
 ```
 
+本阶段仍以本地后台页面配合 ngrok Telegram webhook 做端到端验证：在 Telegram 产生新消息后，本地后台应在 polling 间隔内更新。
+
 ### 验收条件
 
 - 用户向 bot 发送新消息后，后台能在数秒内看到更新。
@@ -448,7 +462,7 @@ ADMIN_POLLING_INTERVAL_MS="5000"
 
 ### 开发目标
 
-补齐测试、部署文档和最终 README，确保项目可以被复现、部署和验收。
+补齐测试、部署文档和最终 README，最后再部署到 Vercel，确保项目可以被复现、部署和验收。
 
 ### 主要任务
 
@@ -474,7 +488,7 @@ ADMIN_POLLING_INTERVAL_MS="5000"
 - 确认 Vercel 环境变量配置。
 - 部署到 Vercel。
 - 将 Telegram webhook 从本地 ngrok URL 切换到 Vercel production URL。
-- 使用真实 Telegram Bot 完成本地 ngrok 与 Vercel production 两轮端到端测试。
+- 使用真实 Telegram Bot 完成 Vercel production 端到端测试，并保留前期已完成的本地 ngrok 端到端验证记录。
 
 ### 涉及模块
 
@@ -495,6 +509,8 @@ Vercel 环境变量与 Telegram webhook 注册步骤详见 `docs/setup.md`。部
 5. 打开后台确认消息已经入库。
 6. 确认后台统计数据更新。
 
+切换后应再次调用 `getWebhookInfo`，确认 webhook URL 已经从 ngrok HTTPS URL 变为 Vercel production URL。
+
 ### 验收条件
 
 - `npm run lint` 通过。
@@ -503,6 +519,7 @@ Vercel 环境变量与 Telegram webhook 注册步骤详见 `docs/setup.md`。部
 - 本地 ngrok 端到端测试已经完成。
 - Vercel 部署成功。
 - Telegram webhook 已成功切换到 Vercel production URL。
+- `getWebhookInfo` 显示 webhook URL 已切换为 Vercel production URL。
 - 真实 Telegram 对话可以在 Vercel production 环境触发 Qwen 回复。
 - MongoDB Atlas 中可以看到完整对话记录。
 - 管理后台可以查看、筛选、搜索、统计并实时更新消息。

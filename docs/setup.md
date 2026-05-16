@@ -180,7 +180,69 @@ MONGODB_URI="mongodb+srv://username:password@cluster-host/ib-aahl-study-assistan
 - Atlas 的 database name 可以先使用 `ib-aahl-study-assistant`，后续代码会通过 Mongoose models 创建集合。
 - 如果连接失败，优先检查 Network Access、用户名密码、connection string 中的 database name 与特殊字符转义。
 
-## 6. Vercel 部署与环境变量
+## 6. ngrok 本地反代测试准备
+
+Phase 4 完成 Telegram webhook route 后，本地应优先通过 ngrok 接收真实 Telegram update。当前开发机可用版本为：
+
+```bash
+ngrok version 3.37.6
+```
+
+如果本机尚未安装 ngrok，请先从 <https://ngrok.com/download> 安装 CLI。
+
+账号与 token 配置：
+
+1. 打开 ngrok dashboard: <https://dashboard.ngrok.com/>
+2. 注册或登录账号。
+3. 进入 `Your Authtoken` 页面，复制 authtoken。
+4. 在本机终端运行：
+
+```bash
+ngrok config add-authtoken <YOUR_NGROK_AUTHTOKEN>
+```
+
+本地 webhook 测试流程：
+
+1. 启动 Next.js 本地开发服务器：
+
+```bash
+npm run dev
+```
+
+2. 另开一个终端，将本地 `3000` 端口暴露为 HTTPS 地址：
+
+```bash
+ngrok http 3000
+```
+
+3. 复制 ngrok 输出中的 `Forwarding` HTTPS URL，例如 `https://xxxx.ngrok-free.app`。
+4. 将 `.env.local` 中的 `NEXT_PUBLIC_APP_URL` 临时改为该 ngrok HTTPS URL：
+
+```bash
+NEXT_PUBLIC_APP_URL="https://xxxx.ngrok-free.app"
+```
+
+5. Phase 4 webhook route 完成后，用该地址注册 Telegram webhook：
+
+```bash
+curl "https://api.telegram.org/bot<TELEGRAM_BOT_TOKEN>/setWebhook?url=<NGROK_HTTPS_URL>/api/telegram/webhook&secret_token=<TELEGRAM_WEBHOOK_SECRET>"
+```
+
+检查 webhook 状态：
+
+```bash
+curl "https://api.telegram.org/bot<TELEGRAM_BOT_TOKEN>/getWebhookInfo"
+```
+
+注意事项：
+
+- 每次重启免费 ngrok tunnel 后，Forwarding URL 可能变化，需要同步更新 `.env.local` 与 Telegram webhook。
+- `NEXT_PUBLIC_APP_URL` 在本地 webhook 测试阶段使用 ngrok HTTPS URL；部署后改为 Vercel production URL。
+- 如果 `npm run dev` 使用的不是 `3000` 端口，`ngrok http` 和 webhook URL 都要同步使用实际端口对应的 Forwarding URL。
+
+## 7. Vercel 部署与环境变量
+
+本项目推荐先完成本地功能开发与 ngrok webhook 端到端验证，再在最后部署到 Vercel。也就是说，Vercel 不需要在 Phase 2 或 Phase 4 前完成；只要提前知道最终需要哪些环境变量即可。
 
 入口：
 
@@ -209,7 +271,7 @@ RECENT_CONTEXT_MESSAGE_LIMIT="10"
 ```
 
 5. 对 Production 环境至少配置全部变量。
-6. 如果需要在 Preview 部署中测试 Telegram webhook，也为 Preview 配置同一组变量，并注意 Preview URL 每次部署可能不同。
+6. 基础开发流程不使用 Vercel Preview URL 注册 Telegram webhook，避免 Preview URL 变化造成额外维护；如确实需要 Preview 测试，再为 Preview 配置同一组变量。
 7. 点击 Deploy，等待部署完成。
 8. 部署完成后，复制 production domain，例如 `https://your-project.vercel.app`。
 9. 回到 Vercel project settings，将 `NEXT_PUBLIC_APP_URL` 更新为 production domain。
@@ -220,24 +282,81 @@ RECENT_CONTEXT_MESSAGE_LIMIT="10"
 - Next.js 本地开发默认读取 `.env.local`。
 - 如果使用 Vercel CLI，也可以通过 `vercel env pull` 拉取 Development 环境变量到本地 `.env` 文件；本项目仍建议保留 `.env.local` 作为主要本地配置。
 
-## 7. Telegram Webhook 注册
+## 8. Telegram Webhook 注册：ngrok 本地路径与 Vercel production 路径
+
+Telegram 只会把消息推送到当前注册的一个 webhook URL。因此开发期间可以先注册到 ngrok URL，最后部署完成后再重新注册到 Vercel production URL。
+
+### 8.1 本地 ngrok webhook 注册
+
+适用阶段：
+
+- Phase 4 完成 Next.js webhook route 后。
+- Phase 5-9 每完成数据库、Qwen、错误处理、后台或 polling 功能后，需要用真实 Telegram 消息验证本地行为时。
 
 前置条件：
 
-- Vercel production deployment 已成功。
-- `NEXT_PUBLIC_APP_URL` 已填为 production URL。
-- `TELEGRAM_BOT_TOKEN` 与 `TELEGRAM_WEBHOOK_SECRET` 已在 Vercel Production 环境变量中配置。
+- 本地 `npm run dev` 已启动。
+- `ngrok http 3000` 已启动，并拿到当前 Forwarding HTTPS URL。
+- `.env.local` 中的 `NEXT_PUBLIC_APP_URL` 已临时改为当前 ngrok HTTPS URL。
+- `.env.local` 中已有真实 `TELEGRAM_BOT_TOKEN` 与 `TELEGRAM_WEBHOOK_SECRET`。
 
-注册 webhook：
+注册 webhook 到 ngrok：
 
 ```bash
-curl "https://api.telegram.org/bot<TELEGRAM_BOT_TOKEN>/setWebhook?url=<NEXT_PUBLIC_APP_URL>/api/telegram/webhook&secret_token=<TELEGRAM_WEBHOOK_SECRET>"
+curl "https://api.telegram.org/bot<TELEGRAM_BOT_TOKEN>/setWebhook?url=<NGROK_HTTPS_URL>/api/telegram/webhook&secret_token=<TELEGRAM_WEBHOOK_SECRET>"
 ```
 
 替换规则：
 
 - `<TELEGRAM_BOT_TOKEN>` 替换为 BotFather 返回的 token。
-- `<NEXT_PUBLIC_APP_URL>` 替换为 Vercel production URL，例如 `https://your-project.vercel.app`。
+- `<NGROK_HTTPS_URL>` 替换为当前 ngrok Forwarding HTTPS URL，例如 `https://xxxx.ngrok-free.app`。
+- `<TELEGRAM_WEBHOOK_SECRET>` 替换为 `.env.local` 中配置的 secret。
+
+示例：
+
+```bash
+curl "https://api.telegram.org/bot123456789:ABCDEF/setWebhook?url=https://xxxx.ngrok-free.app/api/telegram/webhook&secret_token=your-random-secret"
+```
+
+检查 webhook 状态：
+
+```bash
+curl "https://api.telegram.org/bot<TELEGRAM_BOT_TOKEN>/getWebhookInfo"
+```
+
+如果返回结果中的 `url` 是当前 ngrok HTTPS URL，说明 Telegram 已经把 webhook 指向本地开发环境。此时可以在 Telegram 中发送 `/start`、点击按钮或发送普通文本，验证本地 `/api/telegram/webhook` 是否能收到 update 并回复。
+
+ngrok 本地路径注意事项：
+
+- 免费 ngrok tunnel 每次重启后 Forwarding URL 可能变化；URL 变化后必须重新调用 `setWebhook`。
+- 修改 `.env.local` 中的 `NEXT_PUBLIC_APP_URL` 后，通常需要重启 `npm run dev`，确保 Next.js 读取到新值。
+- 如果本地 Next.js 不是运行在 `3000` 端口，`ngrok http` 的端口和 webhook URL 都要同步使用实际端口对应的 Forwarding URL。
+- 本地阶段不需要 Vercel production deployment，也不需要把 webhook 注册到 Vercel。
+
+### 8.2 Vercel production webhook 注册
+
+适用阶段：
+
+- Phase 10 完成测试、README、Vercel 环境变量配置和 production deployment 后。
+- 需要将 Telegram webhook 从本地 ngrok URL 正式切换到线上 Vercel URL 时。
+
+前置条件：
+
+- Vercel production deployment 已成功。
+- Vercel Production 环境变量已配置完整。
+- Vercel Production 中的 `NEXT_PUBLIC_APP_URL` 已填为 production URL。
+- `TELEGRAM_BOT_TOKEN` 与 `TELEGRAM_WEBHOOK_SECRET` 已在 Vercel Production 环境变量中配置。
+
+注册 webhook 到 Vercel production：
+
+```bash
+curl "https://api.telegram.org/bot<TELEGRAM_BOT_TOKEN>/setWebhook?url=<VERCEL_PRODUCTION_URL>/api/telegram/webhook&secret_token=<TELEGRAM_WEBHOOK_SECRET>"
+```
+
+替换规则：
+
+- `<TELEGRAM_BOT_TOKEN>` 替换为 BotFather 返回的 token。
+- `<VERCEL_PRODUCTION_URL>` 替换为 Vercel production URL，例如 `https://your-project.vercel.app`。
 - `<TELEGRAM_WEBHOOK_SECRET>` 替换为 `.env.local` 与 Vercel 环境变量中一致的 secret。
 
 示例：
@@ -252,6 +371,8 @@ curl "https://api.telegram.org/bot123456789:ABCDEF/setWebhook?url=https://your-p
 curl "https://api.telegram.org/bot<TELEGRAM_BOT_TOKEN>/getWebhookInfo"
 ```
 
+如果返回结果中的 `url` 已从 ngrok HTTPS URL 变为 Vercel production URL，说明切换完成。随后应在 Telegram 中重新测试 `/start`、按钮点击、普通 AI 问答、MongoDB 入库和后台更新。
+
 如果需要移除 webhook：
 
 ```bash
@@ -261,10 +382,11 @@ curl "https://api.telegram.org/bot<TELEGRAM_BOT_TOKEN>/deleteWebhook"
 注意事项：
 
 - Telegram 会在 webhook 请求 header 中带上 secret token，项目的 webhook route 需要与 `TELEGRAM_WEBHOOK_SECRET` 对比。
-- 每次更换 production URL 或 webhook secret 后，都需要重新调用 `setWebhook`。
-- 本地开发若要接收真实 Telegram webhook，需要使用 ngrok、Cloudflare Tunnel 等工具提供 HTTPS 公网地址，然后临时将 `NEXT_PUBLIC_APP_URL` 设置为该地址。
+- 每次更换 webhook URL 或 webhook secret 后，都需要重新调用 `setWebhook`。
+- `TELEGRAM_WEBHOOK_SECRET` 在本地 `.env.local`、ngrok `setWebhook` 命令、Vercel Production 环境变量和 Vercel `setWebhook` 命令中应保持一致。
+- 前期默认不使用 Vercel Preview URL 做 Telegram webhook 验证；Preview URL 每次部署可能变化，容易导致 webhook 指向过期地址。
 
-## 8. 最终检查清单
+## 9. 最终检查清单
 
 完成平台配置后，请确认：
 
@@ -274,7 +396,10 @@ curl "https://api.telegram.org/bot<TELEGRAM_BOT_TOKEN>/deleteWebhook"
 - `.env.local` 已确认 `QWEN_MODEL` 与 `QWEN_API_BASE_URL` 可用。
 - `.env.local` 已填写真实 `MONGODB_URI`。
 - `.env.local` 已填写当前可访问的 `NEXT_PUBLIC_APP_URL`。
-- Vercel Production 环境变量与本地 `.env.local` 的关键值一致。
+- 本地 webhook 测试时，ngrok 已配置 authtoken，且 `NEXT_PUBLIC_APP_URL` 使用当前 Forwarding HTTPS URL。
+- 本地 webhook 测试时，`getWebhookInfo` 显示 webhook URL 是当前 ngrok HTTPS URL。
+- 最终部署阶段，Vercel Production 环境变量与本地 `.env.local` 的关键值一致。
+- 最终部署阶段，`getWebhookInfo` 显示 webhook URL 已切换为 Vercel production URL。
 - MongoDB Atlas Network Access 允许 Vercel 或当前开发环境访问。
-- Telegram webhook 已注册到 `<NEXT_PUBLIC_APP_URL>/api/telegram/webhook`。
+- Telegram webhook 已注册到当前阶段对应的 `<PUBLIC_APP_URL>/api/telegram/webhook`。
 - 没有把真实 secrets 写入 `.env.example`、README、截图或提交记录。

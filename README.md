@@ -35,3 +35,4 @@ npm run format:check
 - `spec.md`: Product requirements.
 - `docs/dev-phase.md`: Development phases and acceptance criteria.
 - `docs/architecture.md`: Architecture and directory responsibilities.
+- `docs/setup.md`: Phase 2 environment variables, service tokens, ngrok, Vercel, and webhook setup.
