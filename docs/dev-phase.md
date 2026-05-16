@@ -56,7 +56,7 @@
 
 ### 开发目标
 
-整理项目需要的外部服务与环境变量，确保 Telegram、Gemini、MongoDB Atlas、本地 ngrok webhook 测试、Vercel 部署和 production webhook 配置都有明确入口。当前阶段先准备本地反代测试条件，后续完成 webhook route 后优先通过 ngrok 做真实 Telegram 消息验证，再部署到 Vercel。
+整理项目需要的外部服务与环境变量，确保 Telegram、Qwen、MongoDB Atlas、本地 ngrok webhook 测试、Vercel 部署和 production webhook 配置都有明确入口。当前阶段先准备本地反代测试条件，后续完成 webhook route 后优先通过 ngrok 做真实 Telegram 消息验证，再部署到 Vercel。
 
 ### 主要任务
 
@@ -65,7 +65,9 @@
 ```bash
 TELEGRAM_BOT_TOKEN="YOUR_TELEGRAM_BOT_TOKEN"
 TELEGRAM_WEBHOOK_SECRET="YOUR_TELEGRAM_WEBHOOK_SECRET"
-GEMINI_API_KEY="YOUR_GEMINI_API_KEY"
+QWEN_API_KEY="YOUR_QWEN_API_KEY"
+QWEN_MODEL="qwen-plus"
+QWEN_API_BASE_URL="https://dashscope.aliyuncs.com/compatible-mode/v1"
 MONGODB_URI="YOUR_MONGODB_ATLAS_CONNECTION_STRING"
 NEXT_PUBLIC_APP_URL="YOUR_PUBLIC_APP_URL"
 ADMIN_POLLING_INTERVAL_MS="5000"
@@ -92,7 +94,7 @@ RECENT_CONTEXT_MESSAGE_LIMIT="10"
 
 ### 用户手动操作
 
-详见 `docs/setup.md`。该文档集中说明 Telegram BotFather、Gemini API、MongoDB Atlas、ngrok 本地反代、Vercel 环境变量与 Telegram webhook 注册流程。
+详见 `docs/setup.md`。该文档集中说明 Telegram BotFather、Qwen API、MongoDB Atlas、ngrok 本地反代、Vercel 环境变量与 Telegram webhook 注册流程。
 
 ### 验收条件
 
@@ -232,7 +234,7 @@ curl "https://api.telegram.org/bot<TELEGRAM_BOT_TOKEN>/getWebhookInfo"
 - 建立 repository 层，统一封装数据库读写。
 - 在每次收到用户消息与 bot 回复后保存完整记录。
 - 保存 callback query 产生的互动记录。
-- 记录 Gemini API 错误、Telegram API 错误、数据库错误等错误事件。
+- 记录 Qwen API 错误、Telegram API 错误、数据库错误等错误事件。
 - 为后台筛选准备必要索引，例如 user id、created at、message text。
 
 ### 涉及模块
@@ -260,28 +262,28 @@ MONGODB_URI="mongodb+srv://..."
 - 可以按日期范围查询消息。
 - 可以按消息内容搜索。
 
-## Phase 6: Gemini API 回复与上下文 Prompt
+## Phase 6: Qwen API 回复与上下文 Prompt
 
 ### 开发目标
 
-接入 Gemini API，让 bot 能围绕 IB AAHL 主题生成 AI 学习回复，并将用户近期上下文传入 prompt。
+接入 Qwen API，让 bot 能围绕 IB AAHL 主题生成 AI 学习回复，并将用户近期上下文传入 prompt。
 
 ### 主要任务
 
-- 建立 Gemini service layer。
+- 建立 Qwen service layer。
 - 定义统一 LLM prompt template：
   - system prompt
   - user prompt
   - recent conversation context
 - 从数据库或上下文服务读取每位用户最近 N 条消息。
-- 将近期上下文传入 Gemini。
-- 将 Gemini 回复返回 Telegram。
+- 将近期上下文传入 Qwen。
+- 将 Qwen 回复返回 Telegram。
 - 对 Quiz me 与学习规划功能提供基础 prompt 模板。
-- 将 Gemini 请求失败交给集中错误处理模块。
+- 将 Qwen 请求失败交给集中错误处理模块。
 
 ### 涉及模块
 
-- Gemini client
+- Qwen client
 - Prompt templates
 - Conversation context service
 - AI reply handler
@@ -293,30 +295,32 @@ MONGODB_URI="mongodb+srv://..."
 需要确保 `.env.local` 与 Vercel 环境变量中已经设置：
 
 ```bash
-GEMINI_API_KEY="Gemini API key"
+QWEN_API_KEY="Qwen API key"
+QWEN_MODEL="qwen-plus"
+QWEN_API_BASE_URL="https://dashscope.aliyuncs.com/compatible-mode/v1"
 RECENT_CONTEXT_MESSAGE_LIMIT="10"
 ```
 
 ### 验收条件
 
-- 普通文本问题会触发 Gemini 回复。
+- 普通文本问题会触发 Qwen 回复。
 - 回复内容围绕 IB AAHL 学习场景。
-- Gemini 请求中包含最近 N 条上下文。
+- Qwen 请求中包含最近 N 条上下文。
 - `/newchat` 后新问题不再使用旧上下文。
-- Gemini 失败时不会中断 webhook 请求流程。
+- Qwen 失败时不会中断 webhook 请求流程。
 
 ## Phase 7: 错误处理、Quota 与用户限流
 
 ### 开发目标
 
-建立集中式错误处理，覆盖 spec 中列出的错误类型，并处理 Gemini quota、429 rate limit 与单用户消息限流。
+建立集中式错误处理，覆盖 spec 中列出的错误类型，并处理 Qwen quota、429 rate limit 与单用户消息限流。
 
 ### 主要任务
 
 - 创建统一 error 类型与 error handler。
-- 处理 Gemini API timeout。
-- 处理 Gemini API quota exceeded。
-- 处理 Gemini API 429。
+- 处理 Qwen API timeout。
+- 处理 Qwen API quota exceeded。
+- 处理 Qwen API 429。
 - 处理 Telegram API failed。
 - 处理 Database connection failed。
 - 处理 Invalid webhook secret。
@@ -339,7 +343,7 @@ The AI service has reached its current usage limit. Please try again later.
 
 - `src/errors`
 - Rate limiter
-- Gemini error mapping
+- Qwen error mapping
 - Telegram reply fallback
 - Error logging
 
@@ -354,9 +358,9 @@ USER_RATE_LIMIT_MAX_MESSAGES="20"
 
 ### 验收条件
 
-- Gemini timeout 会回复友好的 fallback。
-- Gemini quota exceeded 会回复 quota fallback。
-- Gemini 429 会回复稍后再试。
+- Qwen timeout 会回复友好的 fallback。
+- Qwen quota exceeded 会回复 quota fallback。
+- Qwen 429 会回复稍后再试。
 - 单一用户超过限流时收到指定英文提示。
 - Invalid webhook secret 会拒绝请求。
 - Invalid message payload 会回复不支持此消息格式。
@@ -379,7 +383,7 @@ USER_RATE_LIMIT_MAX_MESSAGES="20"
 - 支持按消息内容搜索。
 - 展示总消息数。
 - 展示总用户数。
-- 展示 Gemini API 错误次数。
+- 展示 Qwen API 错误次数。
 - 展示最近消息。
 - 展示最新消息时间与最新用户。
 - 为后台创建查询 API route。
@@ -400,7 +404,7 @@ USER_RATE_LIMIT_MAX_MESSAGES="20"
 - 后台可以看到所有对话记录。
 - 后台可以进入或筛选单一用户完整对话。
 - 用户 ID、日期、消息内容搜索均可用。
-- 总消息数、总用户数、Gemini API 错误次数显示正确。
+- 总消息数、总用户数、Qwen API 错误次数显示正确。
 - 最近消息列表按时间倒序展示。
 - 没有数据时页面有清晰空状态。
 
@@ -499,7 +503,7 @@ Vercel 环境变量与 Telegram webhook 注册步骤详见 `docs/setup.md`。部
 - 本地 ngrok 端到端测试已经完成。
 - Vercel 部署成功。
 - Telegram webhook 已成功切换到 Vercel production URL。
-- 真实 Telegram 对话可以在 Vercel production 环境触发 Gemini 回复。
+- 真实 Telegram 对话可以在 Vercel production 环境触发 Qwen 回复。
 - MongoDB Atlas 中可以看到完整对话记录。
 - 管理后台可以查看、筛选、搜索、统计并实时更新消息。
 

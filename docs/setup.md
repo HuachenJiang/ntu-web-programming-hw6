@@ -14,7 +14,9 @@
 ```bash
 TELEGRAM_BOT_TOKEN="YOUR_TELEGRAM_BOT_TOKEN"
 TELEGRAM_WEBHOOK_SECRET="YOUR_TELEGRAM_WEBHOOK_SECRET"
-GEMINI_API_KEY="YOUR_GEMINI_API_KEY"
+QWEN_API_KEY="YOUR_QWEN_API_KEY"
+QWEN_MODEL="qwen-plus"
+QWEN_API_BASE_URL="https://dashscope.aliyuncs.com/compatible-mode/v1"
 MONGODB_URI="YOUR_MONGODB_ATLAS_CONNECTION_STRING"
 NEXT_PUBLIC_APP_URL="YOUR_PUBLIC_APP_URL"
 ADMIN_POLLING_INTERVAL_MS="5000"
@@ -27,13 +29,15 @@ RECENT_CONTEXT_MESSAGE_LIMIT="10"
 
 - `TELEGRAM_BOT_TOKEN`: Telegram BotFather 提供的 bot token，用于调用 Telegram Bot API。
 - `TELEGRAM_WEBHOOK_SECRET`: 自行生成的 webhook secret，用于校验 Telegram webhook 请求来源。
-- `GEMINI_API_KEY`: Google AI Studio / Gemini API key，用于调用 Gemini 模型。
+- `QWEN_API_KEY`: Qwen / 阿里云百炼 Model Studio API key，用于调用 Qwen 模型。
+- `QWEN_MODEL`: Qwen 模型名称，默认可先使用 `qwen-plus`，后续可按成本、延迟与效果调整。
+- `QWEN_API_BASE_URL`: Qwen OpenAI-compatible endpoint。中国内地阿里云百炼北京地域通常使用 `https://dashscope.aliyuncs.com/compatible-mode/v1`；国际站或新加坡地域通常使用 `https://dashscope-intl.aliyuncs.com/compatible-mode/v1`。
 - `MONGODB_URI`: MongoDB Atlas connection string，用于连接云端数据库。
 - `NEXT_PUBLIC_APP_URL`: 项目公开访问地址。本地可先填 ngrok 等公网隧道地址，部署后填 Vercel production URL。
 - `ADMIN_POLLING_INTERVAL_MS`: 管理后台轮询刷新间隔，默认 `5000` 毫秒。
 - `USER_RATE_LIMIT_WINDOW_MS`: 用户限流时间窗口，默认 `60000` 毫秒。
 - `USER_RATE_LIMIT_MAX_MESSAGES`: 单个用户在限流窗口内最多消息数，默认 `20`。
-- `RECENT_CONTEXT_MESSAGE_LIMIT`: 传给 Gemini 的近期上下文消息数量，默认 `10`。
+- `RECENT_CONTEXT_MESSAGE_LIMIT`: 传给 Qwen 的近期上下文消息数量，默认 `10`。
 
 ## 2. Telegram BotFather
 
@@ -97,34 +101,39 @@ TELEGRAM_WEBHOOK_SECRET="上一步生成的随机字符串"
 - 本地 `.env.local`、Vercel 环境变量、`setWebhook` 请求中的 `secret_token` 必须完全一致。
 - secret 不需要来自 Telegram 平台，项目自行生成即可。
 
-## 4. Google AI Studio / Gemini API
+## 4. Qwen API / 阿里云百炼 Model Studio
 
 入口：
 
-- Google AI Studio API Keys: <https://aistudio.google.com/app/apikey>
-- Gemini API key 官方文档: <https://ai.google.dev/gemini-api/docs/api-key>
-- Google Cloud Console: <https://console.cloud.google.com/>
+- 阿里云百炼控制台: <https://bailian.console.aliyun.com/>
+- 阿里云百炼获取 API Key 文档: <https://www.alibabacloud.com/help/zh/doc-detail/2712195.html>
+- Alibaba Cloud Model Studio 获取 API Key 文档: <https://www.alibabacloud.com/help/en/model-studio/get-api-key>
+- Qwen API Reference: <https://www.alibabacloud.com/help/en/model-studio/qwen-api-reference/>
 
 操作步骤：
 
-1. 使用 Google 账号打开 Google AI Studio API Keys 页面。
-2. 若页面提示需要接受服务条款，先完成确认。
-3. 如果已有合适的 Google Cloud project，可以选择该 project；如果没有，可以让 AI Studio 创建默认 project，或在 Google Cloud Console 中先创建 project。
-4. 点击 `Create API key`。
-5. 选择要绑定的 Google Cloud project。
-6. 创建成功后复制 API key。
-7. 将 API key 填入 `.env.local`：
+1. 打开阿里云百炼控制台或 Alibaba Cloud Model Studio，并登录账号。
+2. 如果页面提示需要开通百炼 / Model Studio 服务，先完成开通与服务协议确认。
+3. 进入 API Key 管理页面，创建新的 API key。
+4. 创建成功后复制 API key。不要把 key 写入 README、截图或提交记录。
+5. 确认你准备使用的地域和 endpoint：
+   - 中国内地阿里云百炼北京地域：`https://dashscope.aliyuncs.com/compatible-mode/v1`
+   - 国际站或新加坡地域：`https://dashscope-intl.aliyuncs.com/compatible-mode/v1`
+6. 选择默认模型。基础版本建议先使用 `qwen-plus`；如果后续有更明确的成本、响应速度或推理能力要求，再切换到其他 Qwen 模型。
+7. 将 API key、模型名和 base URL 填入 `.env.local`：
 
 ```bash
-GEMINI_API_KEY="Google AI Studio 返回的 API key"
+QWEN_API_KEY="百炼 / Model Studio 返回的 API key"
+QWEN_MODEL="qwen-plus"
+QWEN_API_BASE_URL="https://dashscope.aliyuncs.com/compatible-mode/v1"
 ```
 
 安全建议：
 
 1. API key 只放在服务端环境变量中，不放在前端代码、公开 README、截图或提交记录里。
-2. 在 Google AI Studio 或 Google Cloud Console 中尽量限制 key 只能用于 Gemini / Generative Language API。
+2. 尽量为本项目单独创建 API key，便于后续轮换、禁用和排查调用量。
 3. 如果发现 key 泄露，立即删除或轮换 key，并更新 `.env.local` 与 Vercel 环境变量。
-4. 若启用 billing，请在 Google Cloud 中设置预算与告警，避免异常调用造成费用风险。
+4. 若启用付费调用，请在阿里云费用中心或 Model Studio 控制台设置预算、余额提醒或用量告警，避免异常调用造成费用风险。
 
 ## 5. MongoDB Atlas
 
@@ -188,7 +197,9 @@ MONGODB_URI="mongodb+srv://username:password@cluster-host/ib-aahl-study-assistan
 ```bash
 TELEGRAM_BOT_TOKEN="YOUR_TELEGRAM_BOT_TOKEN"
 TELEGRAM_WEBHOOK_SECRET="YOUR_TELEGRAM_WEBHOOK_SECRET"
-GEMINI_API_KEY="YOUR_GEMINI_API_KEY"
+QWEN_API_KEY="YOUR_QWEN_API_KEY"
+QWEN_MODEL="qwen-plus"
+QWEN_API_BASE_URL="https://dashscope.aliyuncs.com/compatible-mode/v1"
 MONGODB_URI="YOUR_MONGODB_ATLAS_CONNECTION_STRING"
 NEXT_PUBLIC_APP_URL="https://your-project.vercel.app"
 ADMIN_POLLING_INTERVAL_MS="5000"
@@ -259,7 +270,8 @@ curl "https://api.telegram.org/bot<TELEGRAM_BOT_TOKEN>/deleteWebhook"
 
 - `.env.local` 已填写真实 `TELEGRAM_BOT_TOKEN`。
 - `.env.local` 已填写真实 `TELEGRAM_WEBHOOK_SECRET`。
-- `.env.local` 已填写真实 `GEMINI_API_KEY`。
+- `.env.local` 已填写真实 `QWEN_API_KEY`。
+- `.env.local` 已确认 `QWEN_MODEL` 与 `QWEN_API_BASE_URL` 可用。
 - `.env.local` 已填写真实 `MONGODB_URI`。
 - `.env.local` 已填写当前可访问的 `NEXT_PUBLIC_APP_URL`。
 - Vercel Production 环境变量与本地 `.env.local` 的关键值一致。

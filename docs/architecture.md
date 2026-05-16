@@ -1,6 +1,6 @@
 # Architecture
 
-本文档描述 IB AAHL AI Study Assistant Bot 的基础架构。当前内容覆盖 Phase 1 的项目骨架，后续阶段会随着 Telegram、Gemini、MongoDB 与管理后台实现持续更新。
+本文档描述 IB AAHL AI Study Assistant Bot 的基础架构。当前内容覆盖 Phase 1 的项目骨架，后续阶段会随着 Telegram、Qwen、MongoDB 与管理后台实现持续更新。
 
 ## 技术栈
 
@@ -8,7 +8,7 @@
 - React
 - ESLint + Prettier
 - Vitest
-- 后续阶段接入 Telegram Bot API、Gemini API、MongoDB Atlas 与 Mongoose
+- 后续阶段接入 Telegram Bot API、Qwen API、MongoDB Atlas 与 Mongoose
 
 ## 分层设计
 
@@ -29,7 +29,7 @@
 1. Telegram 将 update 发送到 Next.js webhook route。
 2. Webhook route 校验 secret 与 payload。
 3. Router 将命令、callback query 和普通消息分发到对应 service。
-4. Service 读取近期上下文，必要时调用 Gemini。
+4. Service 读取近期上下文，必要时调用 Qwen。
 5. Repository 写入完整对话记录与错误记录。
 6. Telegram client 将结果发送给用户。
 7. Dashboard 通过 API route 查询统计与最近消息。

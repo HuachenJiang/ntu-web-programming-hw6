@@ -15,7 +15,7 @@
 - `src/app`: Next.js App Router 页面与 API routes。
 - `src/config`: 环境变量与应用配置读取。
 - `src/lib`: 通用纯函数、常量与跨模块工具。
-- `src/services`: 面向业务流程的服务层，例如 Telegram、Gemini、dashboard 统计。
+- `src/services`: 面向业务流程的服务层，例如 Telegram、Qwen、dashboard 统计。
 - `src/repositories`: 数据访问层，隔离 MongoDB/Mongoose 细节。
 - `src/models`: Mongoose schema 与 model。
 - `src/types`: 跨模块共享类型。

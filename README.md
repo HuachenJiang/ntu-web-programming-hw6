@@ -1,6 +1,6 @@
 # IB AAHL AI Study Assistant Bot
 
-Telegram-based AI study assistant for IB AAHL learners. The project will provide scripted bot flows, Gemini-powered answers, conversation persistence, and a basic admin dashboard.
+Telegram-based AI study assistant for IB AAHL learners. The project will provide scripted bot flows, Qwen-powered answers, conversation persistence, and a basic admin dashboard.
 
 ## Tech Stack
 
@@ -8,7 +8,7 @@ Telegram-based AI study assistant for IB AAHL learners. The project will provide
 - React
 - ESLint and Prettier
 - Vitest
-- Planned: Telegram Bot API, Gemini API, MongoDB Atlas, Mongoose, Vercel
+- Planned: Telegram Bot API, Qwen API, MongoDB Atlas, Mongoose, Vercel
 
 ## Development
 
