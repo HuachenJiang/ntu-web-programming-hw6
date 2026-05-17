@@ -1,7 +1,18 @@
 import { loadAppConfig, type AppEnvironmentConfig } from "@/config/app";
 import { AppError } from "@/errors/app-error";
+import { DatabaseError } from "@/errors/database-error";
 import { TelegramApiError } from "@/errors/telegram-api-error";
 import { logger, type Logger } from "@/lib/logger";
+import {
+  conversationRepository,
+  type ConversationRepository,
+  type PersistedConversationContext,
+} from "@/repositories/conversation-repository";
+import {
+  errorLogRepository,
+  type ErrorLogRepository,
+  type ErrorLogSource,
+} from "@/repositories/error-log-repository";
 import { routeTelegramUpdate } from "@/services/telegram-router";
 import {
   createTelegramApiClient,
@@ -18,6 +29,8 @@ import type {
 type TelegramWebhookDependencies = {
   config?: AppEnvironmentConfig;
   telegramClient?: TelegramApiClient;
+  conversationRepository?: ConversationRepository;
+  errorLogRepository?: ErrorLogRepository;
   logger?: Logger;
 };
 
@@ -32,6 +45,8 @@ type ParsedUpdate =
     };
 
 const telegramWebhookSecretHeader = "x-telegram-bot-api-secret-token";
+const databaseFallbackReply =
+  "Sorry, I could not save the conversation right now. Please try again later.";
 
 function jsonResponse(body: unknown, status: number): Response {
   return Response.json(body, { status });
@@ -152,6 +167,58 @@ function getErrorCode(error: unknown): string {
   return "UNKNOWN_SERVER_ERROR";
 }
 
+function getErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  return "Unknown server error";
+}
+
+function getErrorLogSource(error: unknown): ErrorLogSource {
+  if (error instanceof TelegramApiError) {
+    return "telegram";
+  }
+
+  if (error instanceof DatabaseError) {
+    return "database";
+  }
+
+  return "webhook";
+}
+
+async function recordErrorLogSafely(
+  repository: ErrorLogRepository,
+  activeLogger: Logger,
+  input: {
+    error: unknown;
+    updateId?: number;
+    route?: string;
+    chatId?: number | null;
+    metadata?: Record<string, unknown>;
+  },
+): Promise<void> {
+  try {
+    await repository.recordErrorLog({
+      source: getErrorLogSource(input.error),
+      errorCode: getErrorCode(input.error),
+      message: getErrorMessage(input.error),
+      ...(input.updateId !== undefined ? { updateId: input.updateId } : {}),
+      ...(input.chatId !== undefined ? { chatId: input.chatId } : {}),
+      ...(input.route ? { route: input.route } : {}),
+      ...(input.metadata ? { metadata: input.metadata } : {}),
+    });
+  } catch (error) {
+    activeLogger.error({
+      event: "telegram_webhook_error_log_failed",
+      updateId: input.updateId,
+      route: input.route,
+      chatId: input.chatId,
+      errorCode: getErrorCode(error),
+    });
+  }
+}
+
 export async function handleTelegramWebhookRequest(
   request: Request,
   dependencies: TelegramWebhookDependencies = {},
@@ -159,6 +226,10 @@ export async function handleTelegramWebhookRequest(
   const activeLogger = dependencies.logger ?? logger;
   const config = dependencies.config ?? loadAppConfig();
   const requestSecret = request.headers.get(telegramWebhookSecretHeader);
+  const activeConversationRepository =
+    dependencies.conversationRepository ?? conversationRepository;
+  const activeErrorLogRepository =
+    dependencies.errorLogRepository ?? errorLogRepository;
 
   if (requestSecret !== config.telegram.webhookSecret) {
     activeLogger.warn({
@@ -184,6 +255,11 @@ export async function handleTelegramWebhookRequest(
   const telegramClient =
     dependencies.telegramClient ?? createTelegramApiClient({ config });
   const routeResult = routeTelegramUpdate(update);
+  let persistedContext: PersistedConversationContext = {
+    conversationId: null,
+    telegramUserId: null,
+    chatId: routeResult.chatId,
+  };
 
   activeLogger.info({
     event: "telegram_webhook_update_routed",
@@ -191,6 +267,58 @@ export async function handleTelegramWebhookRequest(
     route: routeResult.route,
     chatId: routeResult.chatId,
   });
+
+  try {
+    if (update.callback_query) {
+      persistedContext =
+        await activeConversationRepository.recordCallbackInteraction({
+          update,
+          route: routeResult.route,
+          resetConversation: routeResult.effects?.resetConversation,
+        });
+    } else if (update.message) {
+      persistedContext =
+        await activeConversationRepository.recordIncomingMessage({
+          update,
+          route: routeResult.route,
+          resetConversation: routeResult.effects?.resetConversation,
+        });
+    }
+  } catch (error) {
+    activeLogger.error({
+      event: "telegram_webhook_persistence_failed",
+      updateId: update.update_id,
+      route: routeResult.route,
+      chatId: routeResult.chatId,
+      errorCode: getErrorCode(error),
+    });
+
+    await recordErrorLogSafely(activeErrorLogRepository, activeLogger, {
+      error,
+      updateId: update.update_id,
+      route: routeResult.route,
+      chatId: routeResult.chatId,
+    });
+
+    if (routeResult.chatId !== null) {
+      try {
+        await telegramClient.sendMessage({
+          chat_id: routeResult.chatId,
+          text: databaseFallbackReply,
+        });
+      } catch (replyError) {
+        activeLogger.error({
+          event: "telegram_webhook_database_fallback_reply_failed",
+          updateId: update.update_id,
+          route: routeResult.route,
+          chatId: routeResult.chatId,
+          errorCode: getErrorCode(replyError),
+        });
+      }
+    }
+
+    return jsonResponse({ ok: false }, 500);
+  }
 
   try {
     if (routeResult.callbackAnswer) {
@@ -209,6 +337,12 @@ export async function handleTelegramWebhookRequest(
           ? { reply_markup: routeResult.replyMarkup }
           : {}),
       });
+      await activeConversationRepository.recordBotReply({
+        ...persistedContext,
+        updateId: update.update_id,
+        route: routeResult.route,
+        text: routeResult.text,
+      });
     } else {
       activeLogger.warn({
         event: "telegram_webhook_missing_chat",
@@ -218,8 +352,12 @@ export async function handleTelegramWebhookRequest(
       });
     }
   } catch (error) {
+    const isDatabaseError = error instanceof DatabaseError;
+
     activeLogger.error({
-      event: "telegram_webhook_reply_failed",
+      event: isDatabaseError
+        ? "telegram_webhook_persistence_failed"
+        : "telegram_webhook_reply_failed",
       updateId: update.update_id,
       route: routeResult.route,
       chatId: routeResult.chatId,
@@ -231,8 +369,21 @@ export async function handleTelegramWebhookRequest(
           }
         : {}),
     });
+    await recordErrorLogSafely(activeErrorLogRepository, activeLogger, {
+      error,
+      updateId: update.update_id,
+      route: routeResult.route,
+      chatId: routeResult.chatId,
+      metadata:
+        error instanceof TelegramApiError
+          ? {
+              telegramStatus: error.status,
+              telegramErrorCode: error.telegramErrorCode,
+            }
+          : undefined,
+    });
 
-    return jsonResponse({ ok: false }, 502);
+    return jsonResponse({ ok: false }, isDatabaseError ? 500 : 502);
   }
 
   return jsonResponse({ ok: true }, 200);

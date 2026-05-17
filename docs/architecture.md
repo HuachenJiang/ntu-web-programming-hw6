@@ -9,7 +9,9 @@
 - ESLint + Prettier
 - Vitest
 - 环境变量集中校验
-- 后续阶段接入 Telegram Bot API、Qwen API、MongoDB Atlas 与 Mongoose
+- Telegram Bot API
+- MongoDB Atlas + Mongoose
+- 后续阶段接入 Qwen API
 
 ## 分层设计
 
@@ -33,7 +35,21 @@
 4. Service 读取近期上下文，必要时调用 Qwen。
 5. Repository 写入完整对话记录与错误记录。
 6. Telegram client 将结果发送给用户。
-7. Dashboard 通过 API route 查询统计与最近消息。
+7. 发送成功后，Repository 写入 bot 回复记录。
+8. Dashboard 通过 API route 查询统计与最近消息。
+
+## MongoDB 持久化
+
+Phase 5 起，数据库访问集中放在 `src/repositories`，服务层不直接操作 Mongoose model。`src/lib/mongodb.ts` 是唯一 MongoDB 连接入口，并使用全局缓存避免 Next.js 开发模式或 serverless 环境中重复创建连接。
+
+基础集合：
+
+- `User`: Telegram 用户资料与最近活跃时间，`telegramUserId` 唯一。
+- `Conversation`: 用户与 chat 的 active/closed 会话状态，`/newchat` 会关闭旧 active 会话并创建新会话。
+- `Message`: inbound text、callback interaction 与 outbound bot reply。
+- `ErrorLog`: Telegram、Qwen、database、webhook 等错误事件。
+
+查询能力先由 `conversation-repository` 暴露给后续 dashboard 与 Qwen context 使用，包括按 Telegram user id 查询完整消息、按日期范围查询消息、按文本搜索消息。错误记录统一通过 `error-log-repository` 写入。
 
 ## 测试策略
 
