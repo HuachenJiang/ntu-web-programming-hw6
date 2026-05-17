@@ -12,6 +12,7 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "test": "vitest run",
+    "telegram:webhook:register": "node scripts/register-telegram-webhook.mjs",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

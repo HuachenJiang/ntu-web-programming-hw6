@@ -39,3 +39,26 @@ export type TelegramInlineKeyboardButton = {
 export type TelegramInlineKeyboardMarkup = {
   inline_keyboard: TelegramInlineKeyboardButton[][];
 };
+
+export type TelegramSendMessageRequest = {
+  chat_id: number;
+  text: string;
+  reply_markup?: TelegramInlineKeyboardMarkup;
+};
+
+export type TelegramAnswerCallbackQueryRequest = {
+  callback_query_id: string;
+  text?: string;
+  show_alert?: boolean;
+};
+
+export type TelegramApiResponse<T> =
+  | {
+      ok: true;
+      result: T;
+    }
+  | {
+      ok: false;
+      error_code?: number;
+      description?: string;
+    };

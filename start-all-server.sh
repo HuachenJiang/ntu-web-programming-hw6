@@ -6,6 +6,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PORT="${PORT:-3000}"
 NEXT_LOG="${NEXT_LOG:-$ROOT_DIR/.next/next-dev.log}"
 NGROK_LOG="${NGROK_LOG:-$ROOT_DIR/.next/ngrok.log}"
+REGISTER_TELEGRAM_WEBHOOK="${REGISTER_TELEGRAM_WEBHOOK:-1}"
 export PORT
 
 NEXT_PID=""
@@ -138,8 +139,17 @@ echo
 echo "Use this value in .env.local while testing Telegram webhook locally:"
 echo "NEXT_PUBLIC_APP_URL=\"$PUBLIC_URL\""
 echo
-echo "Telegram webhook command, after the webhook route exists:"
-echo "curl \"https://api.telegram.org/bot<TELEGRAM_BOT_TOKEN>/setWebhook?url=$PUBLIC_URL/api/telegram/webhook&secret_token=<TELEGRAM_WEBHOOK_SECRET>\""
+if [[ "$REGISTER_TELEGRAM_WEBHOOK" == "1" ]]; then
+  echo "Registering Telegram webhook..."
+  (
+    cd "$ROOT_DIR"
+    npm run telegram:webhook:register -- --url="$PUBLIC_URL/api/telegram/webhook"
+  )
+else
+  echo "Skipping Telegram webhook registration because REGISTER_TELEGRAM_WEBHOOK=$REGISTER_TELEGRAM_WEBHOOK."
+  echo "Manual registration command:"
+  echo "npm run telegram:webhook:register -- --url=$PUBLIC_URL/api/telegram/webhook"
+fi
 echo
 echo "Later, after Vercel deployment, replace this local ngrok flow with the Vercel production URL."
 
