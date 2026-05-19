@@ -60,6 +60,11 @@ export type FindMessagesByDateRangeInput = {
   to?: Date;
 };
 
+export type ConversationModeSelection = Extract<
+  BotRoute,
+  "ai_answer" | "quiz_me" | "study_plan"
+>;
+
 export type ConversationRepository = {
   recordIncomingMessage(
     input: RecordIncomingMessageInput,
@@ -75,6 +80,13 @@ export type ConversationRepository = {
     input: FindMessagesByDateRangeInput,
   ): Promise<PersistedMessage[]>;
   searchMessagesByText(query: string): Promise<PersistedMessage[]>;
+  findRecentMessagesByConversationId(
+    conversationId: string,
+    limit: number,
+  ): Promise<PersistedMessage[]>;
+  findLatestModeSelectionByConversationId(
+    conversationId: string,
+  ): Promise<ConversationModeSelection | null>;
 };
 
 type CreatedDocument = {
@@ -90,6 +102,12 @@ const emptyConversationContext: PersistedConversationContext = {
   telegramUserId: null,
   chatId: null,
 };
+
+const modeSelectionRoutes = new Set<ConversationModeSelection>([
+  "ai_answer",
+  "quiz_me",
+  "study_plan",
+]);
 
 function getTelegramDate(timestamp?: number): Date {
   return typeof timestamp === "number"
@@ -394,6 +412,47 @@ export function createConversationRepository(
           .exec();
 
         return messages.map(messageToPersistedMessage);
+      });
+    },
+
+    async findRecentMessagesByConversationId(conversationId, limit) {
+      return runDatabaseOperation(async () => {
+        await connect();
+
+        if (limit <= 0) {
+          return [];
+        }
+
+        const messages = await MessageModel.find({ conversationId })
+          .sort({ createdAt: -1 })
+          .limit(limit)
+          .lean<QueryResultDocument[]>()
+          .exec();
+
+        return messages.reverse().map(messageToPersistedMessage);
+      });
+    },
+
+    async findLatestModeSelectionByConversationId(conversationId) {
+      return runDatabaseOperation(async () => {
+        await connect();
+
+        const messages = await MessageModel.find({
+          conversationId,
+          kind: "callback",
+          route: {
+            $in: [...modeSelectionRoutes],
+          },
+        })
+          .sort({ createdAt: -1 })
+          .limit(1)
+          .lean<QueryResultDocument[]>()
+          .exec();
+        const route = messages[0]?.route;
+
+        return modeSelectionRoutes.has(route as ConversationModeSelection)
+          ? (route as ConversationModeSelection)
+          : null;
       });
     },
   };

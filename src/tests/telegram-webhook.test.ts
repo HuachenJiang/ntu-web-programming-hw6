@@ -1,11 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
 import type { AppEnvironmentConfig } from "@/config/app";
 import { DatabaseError } from "@/errors/database-error";
+import { QwenApiError } from "@/errors/qwen-api-error";
 import { TelegramApiError } from "@/errors/telegram-api-error";
 import { BOT_CALLBACK_DATA, BOT_SCRIPTED_REPLIES } from "@/lib/bot-scripts";
 import type { Logger } from "@/lib/logger";
 import type {
   ConversationRepository,
+  PersistedMessage,
   RecordBotReplyInput,
   RecordCallbackInteractionInput,
   RecordIncomingMessageInput,
@@ -14,6 +16,10 @@ import type {
   ErrorLogRepository,
   RecordErrorLogInput,
 } from "@/repositories/error-log-repository";
+import type {
+  AiReplyService,
+  GenerateAiReplyInput,
+} from "@/services/ai-reply-service";
 import { handleTelegramWebhookRequest } from "@/services/telegram-webhook";
 import type { TelegramApiClient } from "@/services/telegram-api-client";
 
@@ -78,17 +84,22 @@ function createConversationRepository(): ConversationRepository & {
   incomingMessages: RecordIncomingMessageInput[];
   callbackInteractions: RecordCallbackInteractionInput[];
   botReplies: RecordBotReplyInput[];
+  recentMessages: PersistedMessage[];
+  latestModeSelection: "ai_answer" | "quiz_me" | "study_plan" | null;
 } {
   const calls: string[] = [];
   const incomingMessages: RecordIncomingMessageInput[] = [];
   const callbackInteractions: RecordCallbackInteractionInput[] = [];
   const botReplies: RecordBotReplyInput[] = [];
+  const recentMessages: PersistedMessage[] = [];
 
   return {
     calls,
     incomingMessages,
     callbackInteractions,
     botReplies,
+    recentMessages,
+    latestModeSelection: null,
     recordIncomingMessage: vi.fn(async (input) => {
       calls.push("recordIncomingMessage");
       incomingMessages.push(input);
@@ -116,6 +127,22 @@ function createConversationRepository(): ConversationRepository & {
     findMessagesByTelegramUserId: vi.fn(async () => []),
     findMessagesByDateRange: vi.fn(async () => []),
     searchMessagesByText: vi.fn(async () => []),
+    findRecentMessagesByConversationId: vi.fn(async () => recentMessages),
+    findLatestModeSelectionByConversationId: vi.fn(async () => null),
+  };
+}
+
+function createAiReplyService(reply = "AI generated reply"): AiReplyService & {
+  requests: GenerateAiReplyInput[];
+} {
+  const requests: GenerateAiReplyInput[] = [];
+
+  return {
+    requests,
+    generateReply: vi.fn(async (input) => {
+      requests.push(input);
+      return reply;
+    }),
   };
 }
 
@@ -162,10 +189,12 @@ async function handle(
     conversationRepository: createConversationRepository(),
     errorLogRepository: createErrorLogRepository(),
   },
+  aiReplyService = createAiReplyService(),
 ): Promise<Response> {
   return handleTelegramWebhookRequest(req, {
     config,
     telegramClient,
+    aiReplyService,
     logger: testLogger,
     conversationRepository: repositories.conversationRepository,
     errorLogRepository: repositories.errorLogRepository,
@@ -241,6 +270,9 @@ describe("handleTelegramWebhookRequest", () => {
   it("persists inbound text messages and bot replies", async () => {
     const telegramClient = createTelegramClient();
     const conversationRepo = createConversationRepository();
+    const aiReplyService = createAiReplyService(
+      "Use integration by parts with u and dv.",
+    );
 
     const response = await handle(
       request({
@@ -266,6 +298,7 @@ describe("handleTelegramWebhookRequest", () => {
         conversationRepository: conversationRepo,
         errorLogRepository: createErrorLogRepository(),
       },
+      aiReplyService,
     );
 
     expect(response.status).toBe(200);
@@ -277,13 +310,97 @@ describe("handleTelegramWebhookRequest", () => {
       route: "ai_answer",
       resetConversation: undefined,
     });
+    expect(aiReplyService.generateReply).toHaveBeenCalledWith({
+      context: {
+        conversationId: "conversation-1",
+        telegramUserId: 2002,
+        chatId: 1001,
+      },
+      currentUserText: "Explain integration by parts.",
+      currentUpdateId: 20,
+    });
+    expect(telegramClient.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        chat_id: 1001,
+        text: "Use integration by parts with u and dv.",
+      }),
+    );
     expect(conversationRepo.botReplies[0]).toMatchObject({
       conversationId: "conversation-1",
       telegramUserId: 2002,
       chatId: 1001,
       updateId: 20,
       route: "ai_answer",
-      text: BOT_SCRIPTED_REPLIES.aiAnswer,
+      text: "Use integration by parts with u and dv.",
+    });
+  });
+
+  it("logs Qwen failures, sends an AI fallback, and keeps the webhook successful", async () => {
+    const telegramClient = createTelegramClient();
+    const testLogger = createLogger();
+    const conversationRepo = createConversationRepository();
+    const errorLogRepo = createErrorLogRepository();
+    const aiReplyService = createAiReplyService();
+    vi.mocked(aiReplyService.generateReply).mockRejectedValueOnce(
+      new QwenApiError("Qwen unavailable", 503, "ServiceUnavailable"),
+    );
+
+    const response = await handle(
+      request({
+        update_id: 23,
+        message: {
+          message_id: 33,
+          chat: {
+            id: 1001,
+            type: "private",
+          },
+          from: {
+            id: 2002,
+            first_name: "Ada",
+          },
+          text: "Explain vectors.",
+        },
+      }),
+      telegramClient,
+      testLogger,
+      {
+        conversationRepository: conversationRepo,
+        errorLogRepository: errorLogRepo,
+      },
+      aiReplyService,
+    );
+
+    expect(response.status).toBe(200);
+    expect(telegramClient.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        chat_id: 1001,
+        text: "Sorry, I could not generate an AI reply right now. Please try again later.",
+      }),
+    );
+    expect(conversationRepo.botReplies[0]).toMatchObject({
+      route: "ai_answer",
+      text: "Sorry, I could not generate an AI reply right now. Please try again later.",
+    });
+    expect(testLogger.error).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: "telegram_webhook_ai_reply_failed",
+        updateId: 23,
+        route: "ai_answer",
+        chatId: 1001,
+        errorCode: "QWEN_API_FAILED",
+      }),
+    );
+    expect(errorLogRepo.logs[0]).toMatchObject({
+      source: "qwen",
+      errorCode: "QWEN_API_FAILED",
+      message: "Qwen unavailable",
+      updateId: 23,
+      chatId: 1001,
+      route: "ai_answer",
+      metadata: {
+        qwenStatus: 503,
+        qwenErrorCode: "ServiceUnavailable",
+      },
     });
   });
 

@@ -186,9 +186,14 @@ vi.mock("@/models/message", () => ({
     ),
     find: vi.fn((filter: Record<string, unknown>) => {
       const sortState: SortValue = {};
+      let limitState: number | null = null;
       const chain = {
         sort(sort: SortValue) {
           Object.assign(sortState, sort);
+          return chain;
+        },
+        limit(limit: number) {
+          limitState = limit;
           return chain;
         },
         lean() {
@@ -197,9 +202,35 @@ vi.mock("@/models/message", () => ({
         async exec() {
           let results = [...store.messages];
 
+          if (typeof filter.conversationId === "string") {
+            results = results.filter(
+              (message) =>
+                message.conversationId.toString() === filter.conversationId,
+            );
+          }
+
           if (typeof filter.telegramUserId === "number") {
             results = results.filter(
               (message) => message.telegramUserId === filter.telegramUserId,
+            );
+          }
+
+          if (typeof filter.kind === "string") {
+            results = results.filter((message) => message.kind === filter.kind);
+          }
+
+          const routeFilter = filter.route as
+            | { $in?: string[] }
+            | string
+            | undefined;
+
+          if (typeof routeFilter === "string") {
+            results = results.filter(
+              (message) => message.route === routeFilter,
+            );
+          } else if (routeFilter?.$in) {
+            results = results.filter((message) =>
+              routeFilter.$in?.includes(message.route),
             );
           }
 
@@ -237,6 +268,10 @@ vi.mock("@/models/message", () => ({
               (left, right) =>
                 left.createdAt.getTime() - right.createdAt.getTime(),
             );
+          }
+
+          if (typeof limitState === "number") {
+            results = results.slice(0, limitState);
           }
 
           return results;
@@ -457,5 +492,106 @@ describe("repositories", () => {
         telegramStatus: 500,
       },
     });
+  });
+
+  it("finds recent messages inside the current conversation only", async () => {
+    const repository = createConversationRepository();
+    const firstContext = await repository.recordIncomingMessage({
+      update: {
+        update_id: 1,
+        message: {
+          message_id: 10,
+          chat: { id: 1001 },
+          from: { id: 2002 },
+          date: 1710000000,
+          text: "Old conversation",
+        },
+      },
+      route: "ai_answer",
+    });
+
+    await repository.recordIncomingMessage({
+      update: {
+        update_id: 2,
+        message: {
+          message_id: 11,
+          chat: { id: 1001 },
+          from: { id: 2002 },
+          date: 1710000010,
+          text: "/newchat",
+        },
+      },
+      route: "new_chat",
+      resetConversation: true,
+    });
+    await repository.recordIncomingMessage({
+      update: {
+        update_id: 3,
+        message: {
+          message_id: 12,
+          chat: { id: 1001 },
+          from: { id: 2002 },
+          date: 1710000020,
+          text: "Fresh question",
+        },
+      },
+      route: "ai_answer",
+    });
+
+    await expect(
+      repository.findRecentMessagesByConversationId(
+        firstContext.conversationId ?? "",
+        10,
+      ),
+    ).resolves.toMatchObject([{ text: "Old conversation" }]);
+    await expect(
+      repository.findRecentMessagesByConversationId("conversation-2", 10),
+    ).resolves.toMatchObject([
+      { text: "/newchat" },
+      { text: "Fresh question" },
+    ]);
+  });
+
+  it("finds the latest selected AI prompt mode from callbacks", async () => {
+    const repository = createConversationRepository();
+
+    const context = await repository.recordCallbackInteraction({
+      update: {
+        update_id: 1,
+        callback_query: {
+          id: "callback-1",
+          from: { id: 2002 },
+          message: {
+            message_id: 10,
+            chat: { id: 1001 },
+          },
+          data: "menu:quiz_me",
+        },
+      },
+      route: "quiz_me",
+    });
+    await repository.recordCallbackInteraction({
+      update: {
+        update_id: 2,
+        callback_query: {
+          id: "callback-2",
+          from: { id: 2002 },
+          message: {
+            message_id: 11,
+            chat: { id: 1001 },
+          },
+          data: "menu:study_plan",
+        },
+      },
+      route: "study_plan",
+    });
+    store.messages[0]!.createdAt = new Date(1710000000000);
+    store.messages[1]!.createdAt = new Date(1710000010000);
+
+    await expect(
+      repository.findLatestModeSelectionByConversationId(
+        context.conversationId ?? "",
+      ),
+    ).resolves.toBe("study_plan");
   });
 });

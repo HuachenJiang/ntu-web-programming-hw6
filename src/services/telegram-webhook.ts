@@ -1,6 +1,7 @@
 import { loadAppConfig, type AppEnvironmentConfig } from "@/config/app";
 import { AppError } from "@/errors/app-error";
 import { DatabaseError } from "@/errors/database-error";
+import { QwenApiError } from "@/errors/qwen-api-error";
 import { TelegramApiError } from "@/errors/telegram-api-error";
 import { logger, type Logger } from "@/lib/logger";
 import {
@@ -14,6 +15,10 @@ import {
   type ErrorLogSource,
 } from "@/repositories/error-log-repository";
 import { routeTelegramUpdate } from "@/services/telegram-router";
+import {
+  createAiReplyService,
+  type AiReplyService,
+} from "@/services/ai-reply-service";
 import {
   createTelegramApiClient,
   type TelegramApiClient,
@@ -29,6 +34,7 @@ import type {
 type TelegramWebhookDependencies = {
   config?: AppEnvironmentConfig;
   telegramClient?: TelegramApiClient;
+  aiReplyService?: AiReplyService;
   conversationRepository?: ConversationRepository;
   errorLogRepository?: ErrorLogRepository;
   logger?: Logger;
@@ -47,6 +53,8 @@ type ParsedUpdate =
 const telegramWebhookSecretHeader = "x-telegram-bot-api-secret-token";
 const databaseFallbackReply =
   "Sorry, I could not save the conversation right now. Please try again later.";
+const aiFallbackReply =
+  "Sorry, I could not generate an AI reply right now. Please try again later.";
 
 function jsonResponse(body: unknown, status: number): Response {
   return Response.json(body, { status });
@@ -184,7 +192,32 @@ function getErrorLogSource(error: unknown): ErrorLogSource {
     return "database";
   }
 
+  if (error instanceof QwenApiError) {
+    return "qwen";
+  }
+
   return "webhook";
+}
+
+function getErrorLogMetadata(
+  error: unknown,
+): Record<string, unknown> | undefined {
+  if (error instanceof TelegramApiError) {
+    return {
+      telegramStatus: error.status,
+      telegramErrorCode: error.telegramErrorCode,
+    };
+  }
+
+  if (error instanceof QwenApiError) {
+    return {
+      qwenStatus: error.status,
+      qwenErrorCode: error.qwenErrorCode,
+      qwenResponseSummary: error.responseSummary,
+    };
+  }
+
+  return undefined;
 }
 
 async function recordErrorLogSafely(
@@ -254,6 +287,12 @@ export async function handleTelegramWebhookRequest(
   const { update } = parsedUpdate;
   const telegramClient =
     dependencies.telegramClient ?? createTelegramApiClient({ config });
+  const aiReplyService =
+    dependencies.aiReplyService ??
+    createAiReplyService({
+      config,
+      conversationRepository: activeConversationRepository,
+    });
   const routeResult = routeTelegramUpdate(update);
   let persistedContext: PersistedConversationContext = {
     conversationId: null,
@@ -330,9 +369,48 @@ export async function handleTelegramWebhookRequest(
     }
 
     if (routeResult.chatId !== null) {
+      let replyText = routeResult.text;
+
+      if (routeResult.aiInput) {
+        try {
+          replyText = await aiReplyService.generateReply({
+            context: persistedContext,
+            currentUserText: routeResult.aiInput.text,
+            currentUpdateId: update.update_id,
+          });
+        } catch (error) {
+          if (error instanceof DatabaseError) {
+            throw error;
+          }
+
+          activeLogger.error({
+            event: "telegram_webhook_ai_reply_failed",
+            updateId: update.update_id,
+            route: routeResult.route,
+            chatId: routeResult.chatId,
+            errorCode: getErrorCode(error),
+            ...(error instanceof QwenApiError
+              ? {
+                  qwenStatus: error.status,
+                  qwenErrorCode: error.qwenErrorCode,
+                }
+              : {}),
+          });
+          await recordErrorLogSafely(activeErrorLogRepository, activeLogger, {
+            error,
+            updateId: update.update_id,
+            route: routeResult.route,
+            chatId: routeResult.chatId,
+            metadata: getErrorLogMetadata(error),
+          });
+
+          replyText = aiFallbackReply;
+        }
+      }
+
       await telegramClient.sendMessage({
         chat_id: routeResult.chatId,
-        text: routeResult.text,
+        text: replyText,
         ...(routeResult.replyMarkup
           ? { reply_markup: routeResult.replyMarkup }
           : {}),
@@ -341,7 +419,7 @@ export async function handleTelegramWebhookRequest(
         ...persistedContext,
         updateId: update.update_id,
         route: routeResult.route,
-        text: routeResult.text,
+        text: replyText,
       });
     } else {
       activeLogger.warn({
@@ -362,25 +440,14 @@ export async function handleTelegramWebhookRequest(
       route: routeResult.route,
       chatId: routeResult.chatId,
       errorCode: getErrorCode(error),
-      ...(error instanceof TelegramApiError
-        ? {
-            telegramStatus: error.status,
-            telegramErrorCode: error.telegramErrorCode,
-          }
-        : {}),
+      ...getErrorLogMetadata(error),
     });
     await recordErrorLogSafely(activeErrorLogRepository, activeLogger, {
       error,
       updateId: update.update_id,
       route: routeResult.route,
       chatId: routeResult.chatId,
-      metadata:
-        error instanceof TelegramApiError
-          ? {
-              telegramStatus: error.status,
-              telegramErrorCode: error.telegramErrorCode,
-            }
-          : undefined,
+      metadata: getErrorLogMetadata(error),
     });
 
     return jsonResponse({ ok: false }, isDatabaseError ? 500 : 502);
