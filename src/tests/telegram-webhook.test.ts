@@ -20,6 +20,10 @@ import type {
   AiReplyService,
   GenerateAiReplyInput,
 } from "@/services/ai-reply-service";
+import type {
+  RateLimitCheckResult,
+  RateLimiter,
+} from "@/services/rate-limiter";
 import { handleTelegramWebhookRequest } from "@/services/telegram-webhook";
 import type { TelegramApiClient } from "@/services/telegram-api-client";
 
@@ -163,6 +167,22 @@ function createErrorLogRepository(): ErrorLogRepository & {
   };
 }
 
+function createRateLimiter(
+  result: RateLimitCheckResult = { allowed: true },
+): RateLimiter & {
+  checks: string[];
+} {
+  const checks: string[] = [];
+
+  return {
+    checks,
+    check: vi.fn((input) => {
+      checks.push(input.userKey);
+      return result;
+    }),
+  };
+}
+
 function request(body: unknown, secret = "test-secret"): Request {
   return new Request(webhookUrl, {
     method: "POST",
@@ -194,6 +214,7 @@ async function handle(
     errorLogRepository: createErrorLogRepository(),
   },
   aiReplyService = createAiReplyService(),
+  rateLimiter = createRateLimiter(),
 ): Promise<Response> {
   return handleTelegramWebhookRequest(req, {
     config,
@@ -202,6 +223,7 @@ async function handle(
     logger: testLogger,
     conversationRepository: repositories.conversationRepository,
     errorLogRepository: repositories.errorLogRepository,
+    rateLimiter,
   });
 }
 
@@ -411,6 +433,356 @@ describe("handleTelegramWebhookRequest", () => {
         qwenErrorCode: "ServiceUnavailable",
       },
     });
+  });
+
+  it("sends the quota fallback when Qwen quota is exhausted", async () => {
+    const telegramClient = createTelegramClient();
+    const conversationRepo = createConversationRepository();
+    const errorLogRepo = createErrorLogRepository();
+    const aiReplyService = createAiReplyService();
+    vi.mocked(aiReplyService.generateReply).mockRejectedValueOnce(
+      new QwenApiError(
+        "Qwen quota exhausted",
+        403,
+        "QuotaExceeded",
+        "QuotaExceeded: usage limit exceeded",
+        "quota_exceeded",
+      ),
+    );
+
+    const response = await handle(
+      request({
+        update_id: 25,
+        message: {
+          message_id: 35,
+          chat: {
+            id: 1001,
+            type: "private",
+          },
+          from: {
+            id: 2002,
+            first_name: "Ada",
+          },
+          text: "Explain binomial expansion.",
+        },
+      }),
+      telegramClient,
+      createLogger(),
+      {
+        conversationRepository: conversationRepo,
+        errorLogRepository: errorLogRepo,
+      },
+      aiReplyService,
+    );
+
+    expect(response.status).toBe(200);
+    expect(telegramClient.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        chat_id: 1001,
+        text: "The AI service has reached its current usage limit. Please try again later.",
+      }),
+    );
+    expect(conversationRepo.botReplies[0]).toMatchObject({
+      route: "ai_answer",
+      text: "The AI service has reached its current usage limit. Please try again later.",
+    });
+    expect(errorLogRepo.logs[0]).toMatchObject({
+      source: "qwen",
+      errorCode: "QWEN_API_QUOTA_EXCEEDED",
+      metadata: {
+        qwenKind: "quota_exceeded",
+        qwenStatus: 403,
+        qwenErrorCode: "QuotaExceeded",
+      },
+    });
+  });
+
+  it("sends the Qwen rate limit fallback for Qwen 429 errors", async () => {
+    const telegramClient = createTelegramClient();
+    const conversationRepo = createConversationRepository();
+    const errorLogRepo = createErrorLogRepository();
+    const aiReplyService = createAiReplyService();
+    vi.mocked(aiReplyService.generateReply).mockRejectedValueOnce(
+      new QwenApiError(
+        "Qwen rate limited",
+        429,
+        "TooManyRequests",
+        "TooManyRequests: rate limit exceeded",
+        "rate_limited",
+      ),
+    );
+
+    const response = await handle(
+      request({
+        update_id: 26,
+        message: {
+          message_id: 36,
+          chat: {
+            id: 1001,
+          },
+          from: {
+            id: 2002,
+          },
+          text: "Explain matrices.",
+        },
+      }),
+      telegramClient,
+      createLogger(),
+      {
+        conversationRepository: conversationRepo,
+        errorLogRepository: errorLogRepo,
+      },
+      aiReplyService,
+    );
+
+    expect(response.status).toBe(200);
+    expect(telegramClient.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        chat_id: 1001,
+        text: "The AI service is receiving too many requests right now. Please wait a moment and try again.",
+      }),
+    );
+    expect(errorLogRepo.logs[0]).toMatchObject({
+      source: "qwen",
+      errorCode: "QWEN_API_RATE_LIMITED",
+      metadata: {
+        qwenKind: "rate_limited",
+        qwenStatus: 429,
+      },
+    });
+  });
+
+  it("sends the timeout fallback for Qwen timeout errors", async () => {
+    const telegramClient = createTelegramClient();
+    const errorLogRepo = createErrorLogRepository();
+    const aiReplyService = createAiReplyService();
+    vi.mocked(aiReplyService.generateReply).mockRejectedValueOnce(
+      new QwenApiError(
+        "Qwen API request timed out",
+        undefined,
+        undefined,
+        undefined,
+        "timeout",
+      ),
+    );
+
+    const response = await handle(
+      request({
+        update_id: 27,
+        message: {
+          message_id: 37,
+          chat: {
+            id: 1001,
+          },
+          from: {
+            id: 2002,
+          },
+          text: "Explain complex numbers.",
+        },
+      }),
+      telegramClient,
+      createLogger(),
+      {
+        conversationRepository: createConversationRepository(),
+        errorLogRepository: errorLogRepo,
+      },
+      aiReplyService,
+    );
+
+    expect(response.status).toBe(200);
+    expect(telegramClient.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        chat_id: 1001,
+        text: "The AI service is taking too long to respond. Please try again later.",
+      }),
+    );
+    expect(errorLogRepo.logs[0]).toMatchObject({
+      source: "qwen",
+      errorCode: "QWEN_API_TIMEOUT",
+      metadata: {
+        qwenKind: "timeout",
+      },
+    });
+  });
+
+  it("handles unknown AI errors through the centralized fallback path", async () => {
+    const telegramClient = createTelegramClient();
+    const errorLogRepo = createErrorLogRepository();
+    const aiReplyService = createAiReplyService();
+    vi.mocked(aiReplyService.generateReply).mockRejectedValueOnce(
+      new Error("Unexpected AI failure"),
+    );
+
+    const response = await handle(
+      request({
+        update_id: 31,
+        message: {
+          message_id: 41,
+          chat: {
+            id: 1001,
+          },
+          from: {
+            id: 2002,
+          },
+          text: "Explain sequences.",
+        },
+      }),
+      telegramClient,
+      createLogger(),
+      {
+        conversationRepository: createConversationRepository(),
+        errorLogRepository: errorLogRepo,
+      },
+      aiReplyService,
+    );
+
+    expect(response.status).toBe(200);
+    expect(telegramClient.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        chat_id: 1001,
+        text: "Sorry, something went wrong while processing your message. Please try again later.",
+      }),
+    );
+    expect(errorLogRepo.logs[0]).toMatchObject({
+      source: "webhook",
+      errorCode: "UNKNOWN_SERVER_ERROR",
+      message: "Unexpected AI failure",
+    });
+  });
+
+  it("rate limits AI text without calling Qwen and still records the fallback reply", async () => {
+    const telegramClient = createTelegramClient();
+    const testLogger = createLogger();
+    const conversationRepo = createConversationRepository();
+    const errorLogRepo = createErrorLogRepository();
+    const aiReplyService = createAiReplyService();
+    const rateLimiter = createRateLimiter({
+      allowed: false,
+      retryAfterMs: 5000,
+    });
+
+    const response = await handle(
+      request({
+        update_id: 28,
+        message: {
+          message_id: 38,
+          chat: {
+            id: 1001,
+          },
+          from: {
+            id: 2002,
+          },
+          text: "Explain probability.",
+        },
+      }),
+      telegramClient,
+      testLogger,
+      {
+        conversationRepository: conversationRepo,
+        errorLogRepository: errorLogRepo,
+      },
+      aiReplyService,
+      rateLimiter,
+    );
+
+    expect(response.status).toBe(200);
+    expect(rateLimiter.check).toHaveBeenCalledWith({ userKey: "user:2002" });
+    expect(aiReplyService.generateReply).not.toHaveBeenCalled();
+    expect(telegramClient.sendChatAction).not.toHaveBeenCalled();
+    expect(telegramClient.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        chat_id: 1001,
+        text: "You are sending messages too quickly. Please wait a moment and try again.",
+      }),
+    );
+    expect(conversationRepo.calls).toEqual([
+      "recordIncomingMessage",
+      "recordBotReply",
+    ]);
+    expect(conversationRepo.botReplies[0]).toMatchObject({
+      route: "ai_answer",
+      text: "You are sending messages too quickly. Please wait a moment and try again.",
+    });
+    expect(errorLogRepo.logs[0]).toMatchObject({
+      source: "webhook",
+      errorCode: "USER_RATE_LIMITED",
+      metadata: {
+        retryAfterMs: 5000,
+      },
+    });
+    expect(testLogger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: "telegram_webhook_user_rate_limited",
+        errorCode: "USER_RATE_LIMITED",
+      }),
+    );
+  });
+
+  it("does not apply AI text rate limits to commands or callback queries", async () => {
+    const commandRateLimiter = createRateLimiter({
+      allowed: false,
+      retryAfterMs: 5000,
+    });
+    const callbackRateLimiter = createRateLimiter({
+      allowed: false,
+      retryAfterMs: 5000,
+    });
+
+    const commandResponse = await handle(
+      request({
+        update_id: 29,
+        message: {
+          message_id: 39,
+          chat: {
+            id: 1001,
+          },
+          from: {
+            id: 2002,
+          },
+          text: "/help",
+        },
+      }),
+      createTelegramClient(),
+      createLogger(),
+      {
+        conversationRepository: createConversationRepository(),
+        errorLogRepository: createErrorLogRepository(),
+      },
+      createAiReplyService(),
+      commandRateLimiter,
+    );
+
+    const callbackResponse = await handle(
+      request({
+        update_id: 30,
+        callback_query: {
+          id: "callback-rate-limit",
+          from: {
+            id: 2002,
+          },
+          message: {
+            message_id: 40,
+            chat: {
+              id: 1001,
+            },
+          },
+          data: BOT_CALLBACK_DATA.newChat,
+        },
+      }),
+      createTelegramClient(),
+      createLogger(),
+      {
+        conversationRepository: createConversationRepository(),
+        errorLogRepository: createErrorLogRepository(),
+      },
+      createAiReplyService(),
+      callbackRateLimiter,
+    );
+
+    expect(commandResponse.status).toBe(200);
+    expect(callbackResponse.status).toBe(200);
+    expect(commandRateLimiter.check).not.toHaveBeenCalled();
+    expect(callbackRateLimiter.check).not.toHaveBeenCalled();
   });
 
   it("keeps replying when the typing indicator fails", async () => {

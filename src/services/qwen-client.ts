@@ -22,6 +22,8 @@ type QwenClientOptions = {
   logger?: Logger;
 };
 
+const qwenRequestTimeoutMs = 30000;
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -73,6 +75,46 @@ function buildEndpoint(baseUrl: string): string {
   return `${baseUrl.replace(/\/+$/, "")}/chat/completions`;
 }
 
+function isAbortError(error: unknown): boolean {
+  return error instanceof DOMException ||
+    (isRecord(error) && typeof error.name === "string")
+    ? error.name === "AbortError"
+    : false;
+}
+
+function hasQuotaSignal(...values: Array<string | undefined>): boolean {
+  return values
+    .filter((value): value is string => typeof value === "string")
+    .some((value) => {
+      const normalized = value.toLowerCase();
+
+      return (
+        normalized.includes("quota") ||
+        normalized.includes("usage limit") ||
+        normalized.includes("usage_limit") ||
+        normalized.includes("insufficient balance") ||
+        normalized.includes("insufficient_balance") ||
+        normalized.includes("allocated limit")
+      );
+    });
+}
+
+function resolveQwenErrorKind(
+  status: number,
+  qwenErrorCode: string | undefined,
+  responseSummary: string | undefined,
+): QwenApiError["kind"] {
+  if (status === 429) {
+    return "rate_limited";
+  }
+
+  if (hasQuotaSignal(qwenErrorCode, responseSummary)) {
+    return "quota_exceeded";
+  }
+
+  return "api_failed";
+}
+
 export function createQwenClient(options: QwenClientOptions = {}): QwenClient {
   const config = options.config ?? loadAppConfig();
   const fetchImpl = options.fetchImpl ?? fetch;
@@ -81,10 +123,15 @@ export function createQwenClient(options: QwenClientOptions = {}): QwenClient {
   return {
     async generateChatCompletion(input) {
       let response: Response;
+      const abortController = new AbortController();
+      const timeout = setTimeout(() => {
+        abortController.abort();
+      }, qwenRequestTimeoutMs);
 
       try {
         response = await fetchImpl(buildEndpoint(config.qwen.apiBaseUrl), {
           method: "POST",
+          signal: abortController.signal,
           headers: {
             authorization: `Bearer ${config.qwen.apiKey}`,
             "content-type": "application/json",
@@ -94,14 +141,23 @@ export function createQwenClient(options: QwenClientOptions = {}): QwenClient {
             messages: input.messages,
           }),
         });
-      } catch {
+      } catch (error) {
+        const isTimeout = isAbortError(error);
         activeLogger.error({
           event: "qwen_api_request_failed",
-          errorCode: "QWEN_API_FAILED",
+          errorCode: isTimeout ? "QWEN_API_TIMEOUT" : "QWEN_API_FAILED",
           status: null,
         });
 
-        throw new QwenApiError("Qwen API request failed", undefined, undefined);
+        throw new QwenApiError(
+          isTimeout ? "Qwen API request timed out" : "Qwen API request failed",
+          undefined,
+          undefined,
+          undefined,
+          isTimeout ? "timeout" : "api_failed",
+        );
+      } finally {
+        clearTimeout(timeout);
       }
 
       const payload = await response.json().catch(() => null);
@@ -109,10 +165,20 @@ export function createQwenClient(options: QwenClientOptions = {}): QwenClient {
       if (!response.ok) {
         const qwenErrorCode = readErrorCode(payload);
         const responseSummary = readResponseSummary(payload);
+        const kind = resolveQwenErrorKind(
+          response.status,
+          qwenErrorCode,
+          responseSummary,
+        );
 
         activeLogger.error({
           event: "qwen_api_request_failed",
-          errorCode: "QWEN_API_FAILED",
+          errorCode:
+            kind === "rate_limited"
+              ? "QWEN_API_RATE_LIMITED"
+              : kind === "quota_exceeded"
+                ? "QWEN_API_QUOTA_EXCEEDED"
+                : "QWEN_API_FAILED",
           status: response.status,
           qwenErrorCode: qwenErrorCode ?? null,
         });
@@ -122,6 +188,7 @@ export function createQwenClient(options: QwenClientOptions = {}): QwenClient {
           response.status,
           qwenErrorCode,
           responseSummary,
+          kind,
         );
       }
 
@@ -131,6 +198,9 @@ export function createQwenClient(options: QwenClientOptions = {}): QwenClient {
         throw new QwenApiError(
           "Qwen API returned an invalid chat completion response",
           response.status,
+          undefined,
+          undefined,
+          "invalid_response",
         );
       }
 

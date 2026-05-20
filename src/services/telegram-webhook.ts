@@ -1,8 +1,7 @@
 import { loadAppConfig, type AppEnvironmentConfig } from "@/config/app";
-import { AppError } from "@/errors/app-error";
 import { DatabaseError } from "@/errors/database-error";
-import { QwenApiError } from "@/errors/qwen-api-error";
-import { TelegramApiError } from "@/errors/telegram-api-error";
+import { describeError, getErrorCode } from "@/errors/error-handler";
+import { UserRateLimitError } from "@/errors/rate-limit-error";
 import { logger, type Logger } from "@/lib/logger";
 import {
   conversationRepository,
@@ -12,8 +11,11 @@ import {
 import {
   errorLogRepository,
   type ErrorLogRepository,
-  type ErrorLogSource,
 } from "@/repositories/error-log-repository";
+import {
+  getDefaultUserRateLimiter,
+  type RateLimiter,
+} from "@/services/rate-limiter";
 import { routeTelegramUpdate } from "@/services/telegram-router";
 import {
   createAiReplyService,
@@ -37,6 +39,7 @@ type TelegramWebhookDependencies = {
   aiReplyService?: AiReplyService;
   conversationRepository?: ConversationRepository;
   errorLogRepository?: ErrorLogRepository;
+  rateLimiter?: RateLimiter;
   logger?: Logger;
 };
 
@@ -51,10 +54,6 @@ type ParsedUpdate =
     };
 
 const telegramWebhookSecretHeader = "x-telegram-bot-api-secret-token";
-const databaseFallbackReply =
-  "Sorry, I could not save the conversation right now. Please try again later.";
-const aiFallbackReply =
-  "Sorry, I could not generate an AI reply right now. Please try again later.";
 const typingRefreshIntervalMs = 4000;
 
 function jsonResponse(body: unknown, status: number): Response {
@@ -168,59 +167,6 @@ async function parseTelegramUpdate(request: Request): Promise<ParsedUpdate> {
   };
 }
 
-function getErrorCode(error: unknown): string {
-  if (error instanceof AppError) {
-    return error.code;
-  }
-
-  return "UNKNOWN_SERVER_ERROR";
-}
-
-function getErrorMessage(error: unknown): string {
-  if (error instanceof Error) {
-    return error.message;
-  }
-
-  return "Unknown server error";
-}
-
-function getErrorLogSource(error: unknown): ErrorLogSource {
-  if (error instanceof TelegramApiError) {
-    return "telegram";
-  }
-
-  if (error instanceof DatabaseError) {
-    return "database";
-  }
-
-  if (error instanceof QwenApiError) {
-    return "qwen";
-  }
-
-  return "webhook";
-}
-
-function getErrorLogMetadata(
-  error: unknown,
-): Record<string, unknown> | undefined {
-  if (error instanceof TelegramApiError) {
-    return {
-      telegramStatus: error.status,
-      telegramErrorCode: error.telegramErrorCode,
-    };
-  }
-
-  if (error instanceof QwenApiError) {
-    return {
-      qwenStatus: error.status,
-      qwenErrorCode: error.qwenErrorCode,
-      qwenResponseSummary: error.responseSummary,
-    };
-  }
-
-  return undefined;
-}
-
 async function recordErrorLogSafely(
   repository: ErrorLogRepository,
   activeLogger: Logger,
@@ -232,15 +178,21 @@ async function recordErrorLogSafely(
     metadata?: Record<string, unknown>;
   },
 ): Promise<void> {
+  const descriptor = describeError(input.error);
+  const metadata = {
+    ...descriptor.metadata,
+    ...input.metadata,
+  };
+
   try {
     await repository.recordErrorLog({
-      source: getErrorLogSource(input.error),
-      errorCode: getErrorCode(input.error),
-      message: getErrorMessage(input.error),
+      source: descriptor.source,
+      errorCode: descriptor.errorCode,
+      message: descriptor.message,
       ...(input.updateId !== undefined ? { updateId: input.updateId } : {}),
       ...(input.chatId !== undefined ? { chatId: input.chatId } : {}),
       ...(input.route ? { route: input.route } : {}),
-      ...(input.metadata ? { metadata: input.metadata } : {}),
+      ...(Object.keys(metadata).length > 0 ? { metadata } : {}),
     });
   } catch (error) {
     activeLogger.error({
@@ -303,6 +255,26 @@ function startTypingIndicator(
   };
 }
 
+function getAiRateLimitUserKey(
+  update: TelegramUpdate,
+  context: PersistedConversationContext,
+  chatId: number | null,
+): string | null {
+  const telegramUserId = update.message?.from?.id ?? context.telegramUserId;
+
+  if (typeof telegramUserId === "number") {
+    return `user:${telegramUserId}`;
+  }
+
+  const fallbackChatId = chatId ?? context.chatId;
+
+  if (typeof fallbackChatId === "number") {
+    return `chat:${fallbackChatId}`;
+  }
+
+  return null;
+}
+
 export async function handleTelegramWebhookRequest(
   request: Request,
   dependencies: TelegramWebhookDependencies = {},
@@ -314,6 +286,8 @@ export async function handleTelegramWebhookRequest(
     dependencies.conversationRepository ?? conversationRepository;
   const activeErrorLogRepository =
     dependencies.errorLogRepository ?? errorLogRepository;
+  const activeRateLimiter =
+    dependencies.rateLimiter ?? getDefaultUserRateLimiter(config);
 
   if (requestSecret !== config.telegram.webhookSecret) {
     activeLogger.warn({
@@ -375,12 +349,15 @@ export async function handleTelegramWebhookRequest(
         });
     }
   } catch (error) {
+    const descriptor = describeError(error);
+
     activeLogger.error({
       event: "telegram_webhook_persistence_failed",
       updateId: update.update_id,
       route: routeResult.route,
       chatId: routeResult.chatId,
-      errorCode: getErrorCode(error),
+      errorCode: descriptor.errorCode,
+      ...descriptor.metadata,
     });
 
     await recordErrorLogSafely(activeErrorLogRepository, activeLogger, {
@@ -394,7 +371,7 @@ export async function handleTelegramWebhookRequest(
       try {
         await telegramClient.sendMessage({
           chat_id: routeResult.chatId,
-          text: databaseFallbackReply,
+          text: descriptor.fallbackReply ?? routeResult.text,
         });
       } catch (replyError) {
         activeLogger.error({
@@ -407,7 +384,7 @@ export async function handleTelegramWebhookRequest(
       }
     }
 
-    return jsonResponse({ ok: false }, 500);
+    return jsonResponse({ ok: false }, descriptor.httpStatus);
   }
 
   try {
@@ -423,54 +400,88 @@ export async function handleTelegramWebhookRequest(
       let replyText = routeResult.text;
 
       if (routeResult.aiInput) {
-        const typingInput = {
-          chatId: routeResult.chatId,
-          updateId: update.update_id,
-          route: routeResult.route,
-        };
-
-        await sendTypingSafely(telegramClient, activeLogger, typingInput);
-        const stopTyping = startTypingIndicator(
-          telegramClient,
-          activeLogger,
-          typingInput,
+        let shouldGenerateAiReply = true;
+        const rateLimitUserKey = getAiRateLimitUserKey(
+          update,
+          persistedContext,
+          routeResult.chatId,
         );
 
-        try {
-          replyText = await aiReplyService.generateReply({
-            context: persistedContext,
-            currentUserText: routeResult.aiInput.text,
-            currentUpdateId: update.update_id,
+        if (rateLimitUserKey) {
+          const rateLimitResult = activeRateLimiter.check({
+            userKey: rateLimitUserKey,
           });
-        } catch (error) {
-          if (error instanceof DatabaseError) {
-            throw error;
+
+          if (!rateLimitResult.allowed) {
+            const error = new UserRateLimitError(rateLimitResult.retryAfterMs);
+            const descriptor = describeError(error);
+
+            activeLogger.warn({
+              event: "telegram_webhook_user_rate_limited",
+              updateId: update.update_id,
+              route: routeResult.route,
+              chatId: routeResult.chatId,
+              errorCode: descriptor.errorCode,
+              retryAfterMs: rateLimitResult.retryAfterMs,
+            });
+            await recordErrorLogSafely(activeErrorLogRepository, activeLogger, {
+              error,
+              updateId: update.update_id,
+              route: routeResult.route,
+              chatId: routeResult.chatId,
+            });
+
+            replyText = descriptor.fallbackReply ?? routeResult.text;
+            shouldGenerateAiReply = false;
           }
+        }
 
-          activeLogger.error({
-            event: "telegram_webhook_ai_reply_failed",
+        if (shouldGenerateAiReply) {
+          const typingInput = {
+            chatId: routeResult.chatId,
             updateId: update.update_id,
             route: routeResult.route,
-            chatId: routeResult.chatId,
-            errorCode: getErrorCode(error),
-            ...(error instanceof QwenApiError
-              ? {
-                  qwenStatus: error.status,
-                  qwenErrorCode: error.qwenErrorCode,
-                }
-              : {}),
-          });
-          await recordErrorLogSafely(activeErrorLogRepository, activeLogger, {
-            error,
-            updateId: update.update_id,
-            route: routeResult.route,
-            chatId: routeResult.chatId,
-            metadata: getErrorLogMetadata(error),
-          });
+          };
 
-          replyText = aiFallbackReply;
-        } finally {
-          stopTyping();
+          await sendTypingSafely(telegramClient, activeLogger, typingInput);
+          const stopTyping = startTypingIndicator(
+            telegramClient,
+            activeLogger,
+            typingInput,
+          );
+
+          try {
+            replyText = await aiReplyService.generateReply({
+              context: persistedContext,
+              currentUserText: routeResult.aiInput.text,
+              currentUpdateId: update.update_id,
+            });
+          } catch (error) {
+            if (error instanceof DatabaseError) {
+              throw error;
+            }
+
+            const descriptor = describeError(error);
+
+            activeLogger.error({
+              event: "telegram_webhook_ai_reply_failed",
+              updateId: update.update_id,
+              route: routeResult.route,
+              chatId: routeResult.chatId,
+              errorCode: descriptor.errorCode,
+              ...descriptor.metadata,
+            });
+            await recordErrorLogSafely(activeErrorLogRepository, activeLogger, {
+              error,
+              updateId: update.update_id,
+              route: routeResult.route,
+              chatId: routeResult.chatId,
+            });
+
+            replyText = descriptor.fallbackReply ?? routeResult.text;
+          } finally {
+            stopTyping();
+          }
         }
       }
 
@@ -496,27 +507,27 @@ export async function handleTelegramWebhookRequest(
       });
     }
   } catch (error) {
-    const isDatabaseError = error instanceof DatabaseError;
+    const descriptor = describeError(error);
 
     activeLogger.error({
-      event: isDatabaseError
-        ? "telegram_webhook_persistence_failed"
-        : "telegram_webhook_reply_failed",
+      event:
+        descriptor.source === "database"
+          ? "telegram_webhook_persistence_failed"
+          : "telegram_webhook_reply_failed",
       updateId: update.update_id,
       route: routeResult.route,
       chatId: routeResult.chatId,
-      errorCode: getErrorCode(error),
-      ...getErrorLogMetadata(error),
+      errorCode: descriptor.errorCode,
+      ...descriptor.metadata,
     });
     await recordErrorLogSafely(activeErrorLogRepository, activeLogger, {
       error,
       updateId: update.update_id,
       route: routeResult.route,
       chatId: routeResult.chatId,
-      metadata: getErrorLogMetadata(error),
     });
 
-    return jsonResponse({ ok: false }, isDatabaseError ? 500 : 502);
+    return jsonResponse({ ok: false }, descriptor.httpStatus);
   }
 
   return jsonResponse({ ok: true }, 200);
