@@ -49,6 +49,56 @@ describe("admin dashboard API", () => {
     expect(getDashboardData.mock.calls[0]?.[0]?.get("userId")).toBe("2002");
   });
 
+  it("returns API-safe ISO date strings", async () => {
+    const dataWithDates: DashboardData = {
+      stats: {
+        totalMessages: 1,
+        totalUsers: 1,
+        qwenErrorCount: 0,
+        latestMessageAt: "2026-05-20T10:30:00.000Z",
+        latestUser: {
+          telegramUserId: 2002,
+          username: "ada",
+          lastSeenAt: new Date("2026-05-20T10:25:00.000Z"),
+        },
+      },
+      messages: [
+        {
+          id: "message-2",
+          conversationId: "conversation-1",
+          telegramUserId: 2002,
+          chatId: 1001,
+          updateId: 2,
+          direction: "outbound",
+          kind: "bot_reply",
+          route: "ai_answer",
+          text: "Use the power rule.",
+          createdAt: new Date("2026-05-20T10:30:00.000Z"),
+        },
+      ],
+      filters: dashboardData.filters,
+    };
+    const response = await handleAdminDashboardRequest(request(), {
+      getDashboardData: vi.fn(async () => dataWithDates),
+    });
+
+    await expect(response.json()).resolves.toMatchObject({
+      ok: true,
+      data: {
+        stats: {
+          latestUser: {
+            lastSeenAt: "2026-05-20T10:25:00.000Z",
+          },
+        },
+        messages: [
+          {
+            createdAt: "2026-05-20T10:30:00.000Z",
+          },
+        ],
+      },
+    });
+  });
+
   it("returns 400 for invalid dashboard query params", async () => {
     const response = await handleAdminDashboardRequest(request("?limit=0"), {
       getDashboardData: vi.fn(async () => {

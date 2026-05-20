@@ -32,6 +32,24 @@ export type DashboardData = {
   filters: DashboardFilters;
 };
 
+export type DashboardClientLatestUser = Omit<
+  DashboardLatestUser,
+  "lastSeenAt"
+> & {
+  lastSeenAt: string;
+};
+
+export type DashboardClientMessage = Omit<DashboardMessage, "createdAt"> & {
+  createdAt: string;
+};
+
+export type DashboardClientData = Omit<DashboardData, "messages" | "stats"> & {
+  stats: Omit<DashboardStats, "latestUser"> & {
+    latestUser: DashboardClientLatestUser | null;
+  };
+  messages: DashboardClientMessage[];
+};
+
 export class DashboardQueryError extends AppError {
   constructor(message: string) {
     super(message, "ADMIN_DASHBOARD_INVALID_QUERY");
@@ -184,5 +202,26 @@ export async function getDashboardData(
     },
     messages,
     filters,
+  };
+}
+
+export function serializeDashboardData(
+  data: DashboardData,
+): DashboardClientData {
+  return {
+    stats: {
+      ...data.stats,
+      latestUser: data.stats.latestUser
+        ? {
+            ...data.stats.latestUser,
+            lastSeenAt: data.stats.latestUser.lastSeenAt.toISOString(),
+          }
+        : null,
+    },
+    messages: data.messages.map((message) => ({
+      ...message,
+      createdAt: message.createdAt.toISOString(),
+    })),
+    filters: data.filters,
   };
 }

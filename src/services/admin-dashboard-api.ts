@@ -2,6 +2,7 @@ import { DatabaseError } from "@/errors/database-error";
 import {
   DashboardQueryError,
   getDashboardData,
+  serializeDashboardData,
   type DashboardData,
 } from "@/services/dashboard-service";
 
@@ -27,7 +28,7 @@ export async function handleAdminDashboardRequest(
   try {
     const data = await loadDashboardData(url.searchParams);
 
-    return jsonResponse({ ok: true, data }, 200);
+    return jsonResponse({ ok: true, data: serializeDashboardData(data) }, 200);
   } catch (error) {
     if (error instanceof DashboardQueryError) {
       return jsonResponse(

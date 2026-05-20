@@ -3,6 +3,7 @@ import {
   DashboardQueryError,
   getDashboardData,
   parseDashboardSearchParams,
+  serializeDashboardData,
 } from "@/services/dashboard-service";
 import type {
   DashboardLatestUser,
@@ -109,6 +110,28 @@ describe("dashboard service", () => {
         latestUser: null,
       },
       messages: [],
+    });
+  });
+
+  it("serializes dashboard dates for API and client data", async () => {
+    const data = await getDashboardData(new URLSearchParams(), {
+      repository: createRepository(),
+    });
+
+    expect(serializeDashboardData(data)).toMatchObject({
+      stats: {
+        latestMessageAt: "2026-05-20T10:30:00.000Z",
+        latestUser: {
+          telegramUserId: 2002,
+          lastSeenAt: "2026-05-20T10:25:00.000Z",
+        },
+      },
+      messages: [
+        {
+          id: "message-2",
+          createdAt: "2026-05-20T10:30:00.000Z",
+        },
+      ],
     });
   });
 

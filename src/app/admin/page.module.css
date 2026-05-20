@@ -58,6 +58,26 @@
   margin-top: 18px;
 }
 
+.liveStatus {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  border-bottom: 1px solid #dbe3df;
+  color: #61706a;
+  font-size: 0.86rem;
+  padding: 12px 0 0;
+}
+
+.liveStatus p {
+  margin: 0;
+}
+
+.refreshError {
+  color: #9a3b31;
+  font-weight: 700;
+}
+
 .statTile {
   min-height: 98px;
   border: 1px solid #cfd8d3;
@@ -275,6 +295,7 @@
   }
 
   .topBar,
+  .liveStatus,
   .tableHeader {
     align-items: flex-start;
     flex-direction: column;
