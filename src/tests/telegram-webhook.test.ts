@@ -72,6 +72,10 @@ function createTelegramClient(): TelegramApiClient & {
       calls.push("sendMessage");
       return true;
     }),
+    sendChatAction: vi.fn(async () => {
+      calls.push("sendChatAction");
+      return true;
+    }),
     answerCallbackQuery: vi.fn(async () => {
       calls.push("answerCallbackQuery");
       return true;
@@ -319,6 +323,11 @@ describe("handleTelegramWebhookRequest", () => {
       currentUserText: "Explain integration by parts.",
       currentUpdateId: 20,
     });
+    expect(telegramClient.sendChatAction).toHaveBeenCalledWith({
+      chat_id: 1001,
+      action: "typing",
+    });
+    expect(telegramClient.calls).toEqual(["sendChatAction", "sendMessage"]);
     expect(telegramClient.sendMessage).toHaveBeenCalledWith(
       expect.objectContaining({
         chat_id: 1001,
@@ -402,6 +411,62 @@ describe("handleTelegramWebhookRequest", () => {
         qwenErrorCode: "ServiceUnavailable",
       },
     });
+  });
+
+  it("keeps replying when the typing indicator fails", async () => {
+    const telegramClient = createTelegramClient();
+    const testLogger = createLogger();
+    const conversationRepo = createConversationRepository();
+    const aiReplyService = createAiReplyService("Clean AI reply");
+    vi.mocked(telegramClient.sendChatAction).mockRejectedValueOnce(
+      new TelegramApiError("Typing failed", 500, 500),
+    );
+
+    const response = await handle(
+      request({
+        update_id: 24,
+        message: {
+          message_id: 34,
+          chat: {
+            id: 1001,
+            type: "private",
+          },
+          from: {
+            id: 2002,
+            first_name: "Ada",
+          },
+          text: "Explain logarithms.",
+        },
+      }),
+      telegramClient,
+      testLogger,
+      {
+        conversationRepository: conversationRepo,
+        errorLogRepository: createErrorLogRepository(),
+      },
+      aiReplyService,
+    );
+
+    expect(response.status).toBe(200);
+    expect(telegramClient.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        chat_id: 1001,
+        text: "Clean AI reply",
+      }),
+    );
+    expect(conversationRepo.botReplies[0]).toMatchObject({
+      route: "ai_answer",
+      text: "Clean AI reply",
+    });
+    expect(testLogger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: "telegram_webhook_typing_failed",
+        updateId: 24,
+        route: "ai_answer",
+        chatId: 1001,
+        errorCode: "TELEGRAM_API_FAILED",
+      }),
+    );
   });
 
   it("persists callback interactions and the visible route reply", async () => {

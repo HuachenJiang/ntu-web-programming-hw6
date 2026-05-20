@@ -4,6 +4,7 @@ import { logger, type Logger } from "@/lib/logger";
 import type {
   TelegramAnswerCallbackQueryRequest,
   TelegramApiResponse,
+  TelegramSendChatActionRequest,
   TelegramSendMessageRequest,
 } from "@/types/telegram";
 
@@ -15,6 +16,7 @@ type TelegramApiClientOptions = {
 
 export type TelegramApiClient = {
   sendMessage(request: TelegramSendMessageRequest): Promise<unknown>;
+  sendChatAction(request: TelegramSendChatActionRequest): Promise<unknown>;
   answerCallbackQuery(
     request: TelegramAnswerCallbackQueryRequest,
   ): Promise<unknown>;
@@ -104,6 +106,15 @@ export function createTelegramApiClient(
       return callTelegramApi(
         botToken,
         "sendMessage",
+        request,
+        fetchImpl,
+        activeLogger,
+      );
+    },
+    sendChatAction(request) {
+      return callTelegramApi(
+        botToken,
+        "sendChatAction",
         request,
         fetchImpl,
         activeLogger,

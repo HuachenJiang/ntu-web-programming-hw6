@@ -75,16 +75,21 @@ function createConversationRepository(
 
 function createQwenClient(): QwenClient & {
   requests: GenerateChatCompletionInput[];
+  reply: string;
 } {
   const requests: GenerateChatCompletionInput[] = [];
-
-  return {
+  const client = {
     requests,
-    generateChatCompletion: vi.fn(async (input) => {
-      requests.push(input);
-      return "Generated Qwen reply";
-    }),
+    reply: "Generated Qwen reply",
+    generateChatCompletion: vi.fn(
+      async (input: GenerateChatCompletionInput) => {
+        requests.push(input);
+        return client.reply;
+      },
+    ),
   };
+
+  return client;
 }
 
 describe("createAiReplyService", () => {
@@ -182,5 +187,30 @@ describe("createAiReplyService", () => {
       role: "system",
       content: expect.stringContaining("study assistant"),
     });
+  });
+
+  it("normalizes generated replies before returning them", async () => {
+    const repository = createConversationRepository([], null);
+    const qwenClient = createQwenClient();
+    qwenClient.reply = String.raw`### Answer
+
+**Key idea:** $\log_2 3 = \frac{p}{q}$ and p \in \mathbb{Z}^+.`;
+    const service = createAiReplyService({
+      config,
+      conversationRepository: repository,
+      qwenClient,
+    });
+
+    await expect(
+      service.generateReply({
+        context: {
+          conversationId: "conversation-1",
+          telegramUserId: 2002,
+          chatId: 1001,
+        },
+        currentUserText: "Proof by contradiction",
+        currentUpdateId: 5,
+      }),
+    ).resolves.toBe("Answer\n\nKey idea: log_2 3 = (p)/(q) and p in Z+.");
   });
 });

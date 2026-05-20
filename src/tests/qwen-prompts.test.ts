@@ -85,4 +85,18 @@ describe("buildQwenPromptMessages", () => {
       content: expect.stringContaining("study planner"),
     });
   });
+
+  it("instructs Qwen to write plain Telegram text without Markdown or LaTeX delimiters", () => {
+    const messages = buildQwenPromptMessages({
+      mode: "ai_answer",
+      currentUserText: "Explain proof by contradiction.",
+      currentUpdateId: 1,
+      recentMessages: [],
+    });
+
+    expect(messages[0]?.content).toContain("plain Telegram text");
+    expect(messages[0]?.content).toContain("no Markdown headings");
+    expect(messages[0]?.content).toContain("LaTeX delimiters");
+    expect(messages[0]?.content).toContain("log_2(3)");
+  });
 });

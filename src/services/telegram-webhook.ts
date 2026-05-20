@@ -55,6 +55,7 @@ const databaseFallbackReply =
   "Sorry, I could not save the conversation right now. Please try again later.";
 const aiFallbackReply =
   "Sorry, I could not generate an AI reply right now. Please try again later.";
+const typingRefreshIntervalMs = 4000;
 
 function jsonResponse(body: unknown, status: number): Response {
   return Response.json(body, { status });
@@ -252,6 +253,56 @@ async function recordErrorLogSafely(
   }
 }
 
+type TypingIndicatorInput = {
+  chatId: number;
+  updateId: number;
+  route: string;
+};
+
+async function sendTypingSafely(
+  telegramClient: TelegramApiClient,
+  activeLogger: Logger,
+  input: TypingIndicatorInput,
+): Promise<void> {
+  try {
+    await telegramClient.sendChatAction({
+      chat_id: input.chatId,
+      action: "typing",
+    });
+  } catch (error) {
+    activeLogger.warn({
+      event: "telegram_webhook_typing_failed",
+      updateId: input.updateId,
+      route: input.route,
+      chatId: input.chatId,
+      errorCode: getErrorCode(error),
+    });
+  }
+}
+
+function startTypingIndicator(
+  telegramClient: TelegramApiClient,
+  activeLogger: Logger,
+  input: TypingIndicatorInput,
+): () => void {
+  let stopped = false;
+  let interval: ReturnType<typeof setInterval> | null = null;
+
+  interval = setInterval(() => {
+    if (!stopped) {
+      void sendTypingSafely(telegramClient, activeLogger, input);
+    }
+  }, typingRefreshIntervalMs);
+
+  return () => {
+    stopped = true;
+
+    if (interval !== null) {
+      clearInterval(interval);
+    }
+  };
+}
+
 export async function handleTelegramWebhookRequest(
   request: Request,
   dependencies: TelegramWebhookDependencies = {},
@@ -372,6 +423,19 @@ export async function handleTelegramWebhookRequest(
       let replyText = routeResult.text;
 
       if (routeResult.aiInput) {
+        const typingInput = {
+          chatId: routeResult.chatId,
+          updateId: update.update_id,
+          route: routeResult.route,
+        };
+
+        await sendTypingSafely(telegramClient, activeLogger, typingInput);
+        const stopTyping = startTypingIndicator(
+          telegramClient,
+          activeLogger,
+          typingInput,
+        );
+
         try {
           replyText = await aiReplyService.generateReply({
             context: persistedContext,
@@ -405,6 +469,8 @@ export async function handleTelegramWebhookRequest(
           });
 
           replyText = aiFallbackReply;
+        } finally {
+          stopTyping();
         }
       }
 

@@ -76,6 +76,32 @@ describe("createTelegramApiClient", () => {
     );
   });
 
+  it("posts sendChatAction typing requests to Telegram Bot API", async () => {
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(telegramResponse({ ok: true, result: true }));
+    const client = createTelegramApiClient({ config, fetchImpl });
+
+    await client.sendChatAction({
+      chat_id: 1001,
+      action: "typing",
+    });
+
+    expect(fetchImpl).toHaveBeenCalledWith(
+      "https://api.telegram.org/bot123456789:test-token/sendChatAction",
+      expect.objectContaining({
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          chat_id: 1001,
+          action: "typing",
+        }),
+      }),
+    );
+  });
+
   it("throws TelegramApiError when Telegram returns ok=false", async () => {
     const testLogger = createLogger();
     const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(

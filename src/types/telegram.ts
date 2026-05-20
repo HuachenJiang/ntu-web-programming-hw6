@@ -46,6 +46,11 @@ export type TelegramSendMessageRequest = {
   reply_markup?: TelegramInlineKeyboardMarkup;
 };
 
+export type TelegramSendChatActionRequest = {
+  chat_id: number;
+  action: "typing";
+};
+
 export type TelegramAnswerCallbackQueryRequest = {
   callback_query_id: string;
   text?: string;

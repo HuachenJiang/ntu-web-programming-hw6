@@ -1,4 +1,5 @@
 import { loadAppConfig, type AppEnvironmentConfig } from "@/config/app";
+import { normalizeTelegramText } from "@/lib/telegram-text";
 import {
   conversationRepository,
   type ConversationRepository,
@@ -41,7 +42,7 @@ export function createAiReplyService(
   return {
     async generateReply(input) {
       if (input.context.conversationId === null) {
-        return activeQwenClient.generateChatCompletion({
+        const reply = await activeQwenClient.generateChatCompletion({
           model: config.qwen.model,
           messages: buildQwenPromptMessages({
             mode: "ai_answer",
@@ -50,6 +51,8 @@ export function createAiReplyService(
             recentMessages: [],
           }),
         });
+
+        return normalizeTelegramText(reply);
       }
 
       const [recentMessages, latestModeSelection] = await Promise.all([
@@ -62,7 +65,7 @@ export function createAiReplyService(
         ),
       ]);
 
-      return activeQwenClient.generateChatCompletion({
+      const reply = await activeQwenClient.generateChatCompletion({
         model: config.qwen.model,
         messages: buildQwenPromptMessages({
           mode: resolvePromptMode(latestModeSelection),
@@ -71,6 +74,8 @@ export function createAiReplyService(
           recentMessages,
         }),
       });
+
+      return normalizeTelegramText(reply);
     },
   };
 }
