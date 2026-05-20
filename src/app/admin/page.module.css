@@ -1,0 +1,287 @@
+.adminShell {
+  min-height: 100vh;
+  background: #f3f5f2;
+  color: #16201d;
+  padding: 28px;
+}
+
+.adminFrame {
+  width: min(1280px, 100%);
+  margin: 0 auto;
+}
+
+.topBar {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 20px;
+  border-bottom: 1px solid #cfd8d3;
+  padding-bottom: 20px;
+}
+
+.eyebrow {
+  margin: 0 0 6px;
+  color: #4b625a;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.title {
+  margin: 0;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: clamp(2rem, 4vw, 3.8rem);
+  font-weight: 700;
+  letter-spacing: 0;
+  line-height: 0.95;
+}
+
+.homeLink,
+.userLink,
+.clearLink {
+  color: #155e63;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.homeLink:hover,
+.userLink:hover,
+.clearLink:hover {
+  text-decoration: underline;
+}
+
+.statsGrid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(150px, 1fr));
+  gap: 10px;
+  margin-top: 18px;
+}
+
+.statTile {
+  min-height: 98px;
+  border: 1px solid #cfd8d3;
+  border-radius: 8px;
+  background: #fbfcf8;
+  padding: 14px;
+}
+
+.statLabel {
+  margin: 0;
+  color: #61706a;
+  font-size: 0.74rem;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.statValue {
+  margin: 14px 0 0;
+  color: #16201d;
+  font-size: clamp(1.45rem, 3vw, 2.25rem);
+  font-weight: 800;
+  line-height: 1;
+  word-break: break-word;
+}
+
+.statMeta {
+  margin: 8px 0 0;
+  color: #61706a;
+  font-size: 0.86rem;
+  line-height: 1.35;
+}
+
+.filterBand {
+  border-bottom: 1px solid #cfd8d3;
+  padding: 18px 0;
+}
+
+.filterForm {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr 1.3fr 110px auto auto;
+  gap: 10px;
+  align-items: end;
+}
+
+.field {
+  display: grid;
+  gap: 6px;
+}
+
+.field label {
+  color: #455850;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0;
+}
+
+.field input {
+  width: 100%;
+  min-height: 40px;
+  border: 1px solid #bdc9c3;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #16201d;
+  font: inherit;
+  padding: 8px 10px;
+}
+
+.button {
+  min-height: 40px;
+  border: 1px solid #164e50;
+  border-radius: 6px;
+  background: #164e50;
+  color: #ffffff;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 800;
+  padding: 8px 14px;
+}
+
+.clearLink {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 40px;
+  border: 1px solid #bdc9c3;
+  border-radius: 6px;
+  background: #ffffff;
+  padding: 8px 14px;
+}
+
+.tableHeader {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 18px 0 12px;
+}
+
+.sectionTitle {
+  margin: 0;
+  font-size: 1rem;
+  letter-spacing: 0;
+}
+
+.resultCount {
+  margin: 0;
+  color: #61706a;
+  font-size: 0.9rem;
+}
+
+.tableWrap {
+  overflow-x: auto;
+  border: 1px solid #cfd8d3;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.messageTable {
+  width: 100%;
+  min-width: 980px;
+  border-collapse: collapse;
+}
+
+.messageTable th,
+.messageTable td {
+  border-bottom: 1px solid #e4ebe7;
+  padding: 11px 12px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.messageTable th {
+  background: #edf2ee;
+  color: #455850;
+  font-size: 0.75rem;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.messageTable tr:last-child td {
+  border-bottom: 0;
+}
+
+.mono {
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 0.86rem;
+}
+
+.messageText {
+  max-width: 420px;
+  margin: 0;
+  color: #25312d;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  border-radius: 999px;
+  background: #e6efea;
+  color: #26453d;
+  font-size: 0.78rem;
+  font-weight: 800;
+  padding: 3px 8px;
+}
+
+.outbound {
+  background: #e8ecef;
+  color: #273b4a;
+}
+
+.emptyState,
+.errorState {
+  border: 1px solid #cfd8d3;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 28px;
+}
+
+.emptyState h2,
+.errorState h2 {
+  margin: 0;
+  font-size: 1.15rem;
+}
+
+.emptyState p,
+.errorState p {
+  margin: 10px 0 0;
+  color: #61706a;
+  line-height: 1.5;
+}
+
+.errorState {
+  border-color: #d9a6a0;
+  background: #fff9f8;
+}
+
+@media (max-width: 980px) {
+  .statsGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .filterForm {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 620px) {
+  .adminShell {
+    padding: 18px;
+  }
+
+  .topBar,
+  .tableHeader {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .statsGrid,
+  .filterForm {
+    grid-template-columns: 1fr;
+  }
+}
